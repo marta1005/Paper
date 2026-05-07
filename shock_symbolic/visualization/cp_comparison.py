@@ -23,6 +23,19 @@ import numpy as np
 ABS_ERROR_CMAP = LinearSegmentedColormap.from_list("gray_red_abs_error", ["#eeeeee", "#fdae61", "#d73027"])
 
 
+def finite_minmax(values: np.ndarray, default: tuple[float, float] = (-1.0, 1.0)) -> tuple[float, float]:
+    """Return exact finite min/max with a small guard for constant fields."""
+    finite = np.asarray(values)[np.isfinite(values)]
+    if finite.size == 0:
+        return default
+    vmin = float(np.min(finite))
+    vmax = float(np.max(finite))
+    if np.isclose(vmin, vmax):
+        eps = max(abs(vmin) * 1.0e-6, 1.0e-6)
+        return vmin - eps, vmax + eps
+    return vmin, vmax
+
+
 def sample_indices(n_points: int, max_points: int | None = None, seed: int = 42) -> np.ndarray:
     """Return deterministic sorted plotting indices."""
     if max_points is None or n_points <= max_points:
@@ -148,7 +161,7 @@ def save_cp_comparison_2d(
     metrics: dict[str, float] = {}
     if cp_pred is None:
         values = cp_true[idx]
-        vmin, vmax = np.percentile(values[np.isfinite(values)], robust_percentiles)
+        vmin, vmax = finite_minmax(values)
         fig, ax = plt.subplots(figsize=(10.0, 5.8), constrained_layout=True)
         sc = ax.scatter(x[idx], y[idx], c=values, s=point_size, cmap=cmap, vmin=vmin, vmax=vmax, linewidths=0)
         ax.set_title(title or "Cp true")
@@ -163,13 +176,12 @@ def save_cp_comparison_2d(
     cp_pred = np.asarray(cp_pred, dtype=np.float32)
     metrics = cp_error_metrics(cp_true[mask], cp_pred[mask])
     cp_values = np.concatenate([cp_true[idx], cp_pred[idx]])
-    finite = np.isfinite(cp_values)
-    vmin, vmax = np.percentile(cp_values[finite], robust_percentiles)
+    vmin, vmax = finite_minmax(cp_values)
     err = cp_pred - cp_true
     abs_err = np.abs(err)
     err_values = abs_err[idx]
     finite_err = np.isfinite(err_values)
-    err_lim = float(np.percentile(err_values[finite_err], 99.0)) if np.any(finite_err) else 1.0
+    err_lim = float(np.max(err_values[finite_err])) if np.any(finite_err) else 1.0
     err_lim = max(err_lim, 1.0e-8)
 
     fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.4), constrained_layout=True)
@@ -263,10 +275,10 @@ def save_critical_cp_grid_2d(
         row_metrics.append(row_payload)
 
     cp_values = np.concatenate([values[np.isfinite(values)] for values in cp_for_scale if values.size])
-    cp_vmin, cp_vmax = np.percentile(cp_values, robust_percentiles) if cp_values.size else (-1.0, 1.0)
+    cp_vmin, cp_vmax = finite_minmax(cp_values)
     if err_for_scale:
         err_values = np.concatenate([values[np.isfinite(values)] for values in err_for_scale if values.size])
-        err_lim = float(np.percentile(err_values, 99.0)) if err_values.size else 1.0
+        err_lim = float(np.max(err_values)) if err_values.size else 1.0
     else:
         err_lim = 1.0
     err_lim = max(err_lim, 1.0e-8)

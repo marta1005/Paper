@@ -9,6 +9,7 @@ from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 
 from shock_symbolic.visualization.scatter_plots import save_case_scatter_suite
+from shock_symbolic.visualization.cp_comparison import finite_minmax
 
 CP_CMAP = "jet"
 ABS_ERROR_CMAP = LinearSegmentedColormap.from_list("gray_red_abs_error", ["#eeeeee", "#fdae61", "#d73027"])
@@ -65,7 +66,7 @@ def save_symbolic_prediction_grid(
         cp = np.asarray(features["Cp"], dtype=np.float32)  # type: ignore[index]
         cp_values.append(cp[np.isfinite(cp)])
     cp_all = np.concatenate([values for values in cp_values if values.size])
-    cp_vmin, cp_vmax = np.percentile(cp_all, [1.0, 99.0]) if cp_all.size else (-1.0, 1.0)
+    cp_vmin, cp_vmax = finite_minmax(cp_all)
 
     n_rows = len(rows)
     fig = plt.figure(figsize=(13.3, max(3.0, 2.55 * n_rows + 0.8)))
@@ -107,8 +108,6 @@ def save_symbolic_prediction_grid(
         cbar = fig.colorbar(sc_cp, ax=axes[0], shrink=0.80, pad=0.015)
         cbar.ax.tick_params(labelsize=6)
 
-        # Same color scale as Cp real. The light background keeps the planform
-        # readable while the full-opacity points show the predicted footprint.
         sc_pred = axes[1].scatter(
             x[idx],
             y[idx],
@@ -118,7 +117,6 @@ def save_symbolic_prediction_grid(
             vmin=cp_vmin,
             vmax=cp_vmax,
             linewidths=0,
-            alpha=0.16,
         )
         pred_idx = idx_set & pred_mask
         if np.any(pred_idx):
