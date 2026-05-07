@@ -52,8 +52,8 @@ def save_symbolic_prediction_grid(
 ) -> None:
     """Save a compact multi-case grid comparing shock labels and predictions.
 
-    Each row is one CFD case. Columns show the Cp field, the predicted
-    shock footprint colored with the same Cp scale, and the absolute error.
+    Each row is one CFD case. Columns show the Cp field, the Cp field with
+    the predicted shock footprint overlaid, and the absolute binary error.
     """
     if not rows:
         return
@@ -73,7 +73,7 @@ def save_symbolic_prediction_grid(
     grid = fig.add_gridspec(n_rows, 4, width_ratios=[0.9, 3.0, 3.0, 3.0], hspace=0.42, wspace=0.18)
     fig.subplots_adjust(left=0.035, right=0.992, bottom=0.045, top=0.92)
 
-    column_titles = ["$C_p$ real", "predicted", "error absoluto"]
+    column_titles = ["$C_p$ real", "$C_p$ + predicted", "error absoluto"]
     for row_idx, item in enumerate(rows):
         features = item["features"]
         labels = item["labels"]
@@ -108,28 +108,26 @@ def save_symbolic_prediction_grid(
         cbar = fig.colorbar(sc_cp, ax=axes[0], shrink=0.80, pad=0.015)
         cbar.ax.tick_params(labelsize=6)
 
-        axes[1].scatter(
+        sc_pred = axes[1].scatter(
             x[idx],
             y[idx],
-            c="#d6d6d6",
+            c=cp[idx],
             s=point_size,
+            cmap=CP_CMAP,
+            vmin=cp_vmin,
+            vmax=cp_vmax,
             linewidths=0,
         )
         pred_idx = idx_set & pred_mask
-        sc_pred = None
         if np.any(pred_idx):
-            sc_pred = axes[1].scatter(
+            axes[1].scatter(
                 x[pred_idx],
                 y[pred_idx],
-                c=cp[pred_idx],
-                s=point_size,
-                cmap=CP_CMAP,
-                vmin=cp_vmin,
-                vmax=cp_vmax,
+                c="black",
+                s=max(point_size * 4.0, 1.2),
+                alpha=0.82,
                 linewidths=0,
             )
-        else:
-            sc_pred = axes[1].scatter([], [], c=[], cmap=CP_CMAP, vmin=cp_vmin, vmax=cp_vmax, linewidths=0)
         cbar = fig.colorbar(sc_pred, ax=axes[1], shrink=0.80, pad=0.015)
         cbar.ax.tick_params(labelsize=6)
 
