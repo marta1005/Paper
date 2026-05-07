@@ -16,7 +16,11 @@ os.environ.setdefault("XDG_CACHE_HOME", str(_CACHE / "xdg"))
 
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
+
+
+ERROR_CMAP = LinearSegmentedColormap.from_list("blue_gray_red", ["#2166ac", "#f2f2f2", "#b2182b"])
 
 
 def sample_indices(n_points: int, max_points: int | None = None, seed: int = 42) -> np.ndarray:
@@ -171,7 +175,7 @@ def save_cp_comparison_2d(
     fields = [
         ("Cp true", cp_true, cmap, vmin, vmax),
         ("Cp pred", cp_pred, cmap, vmin, vmax),
-        ("Cp pred - true", err, "RdBu_r", -err_lim, err_lim),
+        ("Cp pred - true", err, ERROR_CMAP, -err_lim, err_lim),
     ]
     for ax, (label, field, field_cmap, field_vmin, field_vmax) in zip(axes, fields):
         sc = ax.scatter(
@@ -300,7 +304,7 @@ def save_critical_cp_grid_2d(
         if has_predictions and pred is not None:
             pred_arr = np.asarray(pred, dtype=np.float32)
             fields.append(("$C_p$ predicho", pred_arr, "jet", float(cp_vmin), float(cp_vmax)))
-            fields.append(("Predicho - real", pred_arr - cp_true, "RdBu_r", -err_lim, err_lim))
+            fields.append(("Predicho - real", pred_arr - cp_true, ERROR_CMAP, -err_lim, err_lim))
 
         if has_predictions:
             cell_row = row

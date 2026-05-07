@@ -163,6 +163,7 @@ outputs/symbolic/pysr/best_sensor.json
 outputs/symbolic/pysr/threshold.json
 outputs/symbolic/evaluation/test/per_case_metrics.csv
 outputs/symbolic/evaluation/test/global_metrics.json
+outputs/symbolic/evaluation/test/shock_prediction_grid.png
 ```
 
 ## Features
