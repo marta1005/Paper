@@ -108,19 +108,17 @@ def save_symbolic_prediction_grid(
         cbar = fig.colorbar(sc_cp, ax=axes[0], shrink=0.80, pad=0.015)
         cbar.ax.tick_params(labelsize=6)
 
-        sc_pred = axes[1].scatter(
+        axes[1].scatter(
             x[idx],
             y[idx],
-            c=cp[idx],
+            c="#d6d6d6",
             s=point_size,
-            cmap=CP_CMAP,
-            vmin=cp_vmin,
-            vmax=cp_vmax,
             linewidths=0,
         )
         pred_idx = idx_set & pred_mask
+        sc_pred = None
         if np.any(pred_idx):
-            axes[1].scatter(
+            sc_pred = axes[1].scatter(
                 x[pred_idx],
                 y[pred_idx],
                 c=cp[pred_idx],
@@ -130,10 +128,12 @@ def save_symbolic_prediction_grid(
                 vmax=cp_vmax,
                 linewidths=0,
             )
+        else:
+            sc_pred = axes[1].scatter([], [], c=[], cmap=CP_CMAP, vmin=cp_vmin, vmax=cp_vmax, linewidths=0)
         cbar = fig.colorbar(sc_pred, ax=axes[1], shrink=0.80, pad=0.015)
         cbar.ax.tick_params(labelsize=6)
 
-        abs_error = np.abs(scores - shock_label.astype(np.float32))
+        abs_error = np.abs(pred_mask.astype(np.float32) - shock_label.astype(np.float32))
         sc_err = axes[2].scatter(
             x[idx],
             y[idx],

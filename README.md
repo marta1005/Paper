@@ -148,6 +148,27 @@ prediction:
   column: 0
 ```
 
+Selected cases `2, 65, 79, 39`:
+
+```bash
+python scripts/02_compute_features.py --config configs/features_cases_2_65_79_39.yaml
+python scripts/03_generate_labels.py --config configs/labels_cases_2_65_79_39.yaml
+python scripts/06_evaluate_symbolic_sensor.py --config configs/pysr_cases_2_65_79_39.yaml
+python scripts/08_plot_critical_cp_grid.py --config configs/cp_grid_cases_2_65_79_39.yaml
+```
+
+The symbolic-sensor prediction/error grid is saved to:
+
+```text
+outputs/symbolic/evaluation_cases_2_65_79_39/test/shock_prediction_grid.png
+```
+
+The Cp-only selected grid is saved to:
+
+```text
+outputs/symbolic/figures/cp_grid_test_cases_0002_0065_0079_0039.png
+```
+
 ## Main Outputs
 
 ```text

@@ -1,0 +1,25 @@
+features_dir: outputs/symbolic/features_cases_2_65_79_39
+output_dir: outputs/symbolic/labels_cases_2_65_79_39
+splits: [test]
+case_ids:
+  - test_0002
+  - test_0065
+  - test_0079
+  - test_0039
+clean_output: false
+logging:
+  level: INFO
+shock:
+  percentile: 98.5
+  min_mach: 0.7
+  score_lower_percentile: 50.0
+  score_upper_percentile: 99.5
+separation:
+  low_cf_percentile: 20.0
+  high_grad_cf_percentile: 95.0
+  reverse_parallel_threshold: 0.0
+  require_low_cf_for_reversal: false
+visualization:
+  max_plot_cases: 4
+  max_points: 100000
+  output_dir: outputs/symbolic/figures/labels_selected_cases_2_65_79_39

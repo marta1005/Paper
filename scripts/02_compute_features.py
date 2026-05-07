@@ -26,6 +26,34 @@ from shock_symbolic.utils.logging import configure_logging
 LOGGER = logging.getLogger(__name__)
 
 
+def _select_cases(cases: list[dict], cfg: dict) -> list[dict]:
+    """Select cases by explicit indices or ids, preserving order; otherwise apply filters."""
+    explicit = cfg.get("condition_indices")
+    if explicit:
+        selected = []
+        for raw_idx in explicit:
+            idx = int(raw_idx)
+            if idx < 0 or idx >= len(cases):
+                raise IndexError(f"condition index {idx} is outside the available range [0, {len(cases) - 1}]")
+            selected.append(cases[idx])
+        return selected
+
+    case_ids = cfg.get("case_ids")
+    if case_ids:
+        by_id = {str(case["case_id"]): case for case in cases}
+        missing = [str(case_id) for case_id in case_ids if str(case_id) not in by_id]
+        if missing:
+            raise KeyError(f"case_ids not found in case index: {missing}")
+        return [by_id[str(case_id)] for case_id in case_ids]
+
+    filters = cfg.get("case_filters", {})
+    if filters.get("min_mach") is not None:
+        cases = [case for case in cases if float(case["Mach"]) >= float(filters["min_mach"])]
+    if filters.get("max_mach") is not None:
+        cases = [case for case in cases if float(case["Mach"]) <= float(filters["max_mach"])]
+    return cases
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
@@ -41,11 +69,7 @@ def main() -> None:
     rows = []
     for split in splits:
         cases = load_case_index(case_index_dir / f"case_index_{split}.csv")
-        filters = cfg.get("case_filters", {})
-        if filters.get("min_mach") is not None:
-            cases = [case for case in cases if float(case["Mach"]) >= float(filters["min_mach"])]
-        if filters.get("max_mach") is not None:
-            cases = [case for case in cases if float(case["Mach"]) <= float(filters["max_mach"])]
+        cases = _select_cases(cases, cfg)
         max_cases = feature_cfg.get("max_cases")
         if max_cases is not None:
             cases = cases[: int(max_cases)]

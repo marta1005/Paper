@@ -28,6 +28,32 @@ def _load_npz(path: Path) -> dict[str, np.ndarray]:
         return {key: np.asarray(data[key]) for key in data.files}
 
 
+def _select_feature_files(files: list[Path], cfg: dict) -> list[Path]:
+    """Select feature files by explicit ids or sorted order, preserving config order."""
+    case_ids = cfg.get("case_ids")
+    if case_ids:
+        by_id = {path.stem: path for path in files}
+        missing = [str(case_id) for case_id in case_ids if str(case_id) not in by_id]
+        if missing:
+            raise KeyError(f"case_ids not found in features directory: {missing}")
+        return [by_id[str(case_id)] for case_id in case_ids]
+
+    condition_indices = cfg.get("condition_indices")
+    if condition_indices:
+        selected = []
+        for raw_idx in condition_indices:
+            idx = int(raw_idx)
+            if idx < 0 or idx >= len(files):
+                raise IndexError(f"condition index {idx} is outside the available range [0, {len(files) - 1}]")
+            selected.append(files[idx])
+        return selected
+
+    max_cases = cfg.get("max_cases")
+    if max_cases is not None:
+        return files[: int(max_cases)]
+    return files
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
@@ -42,9 +68,7 @@ def main() -> None:
     plot_max_cases = int(viz_cfg.get("max_plot_cases", viz_cfg.get("max_cases", 0)))
     for split in cfg.get("splits", ["train", "test"]):
         files = sorted((features_dir / split).glob("*.npz"))
-        max_cases = cfg.get("max_cases")
-        if max_cases is not None:
-            files = files[: int(max_cases)]
+        files = _select_feature_files(files, cfg)
         split_out = output_dir / split
         split_out.mkdir(parents=True, exist_ok=True)
         if clean_output:

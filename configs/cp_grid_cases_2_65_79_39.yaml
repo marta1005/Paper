@@ -1,0 +1,29 @@
+seed: 42
+data_dir: data
+case_index_dir: outputs/symbolic/case_index
+split: test
+logging:
+  level: INFO
+title: Selected ONERA CRM WBPN Cp cases
+output_path: outputs/symbolic/figures/cp_grid_test_cases_0002_0065_0079_0039.png
+
+# Explicit order requested by the user.
+case_ids:
+  - test_0002
+  - test_0065
+  - test_0079
+  - test_0039
+
+# Optional full-field Cp predictions. Set this to a .npy/.npz containing Cp_pred
+# or Y_pred when a Cp prediction model has produced outputs.
+prediction:
+  path:
+  key:
+  column: 0
+
+plot:
+  surface: upper
+  normal_z_threshold: 0.0
+  max_points_per_case: 100000
+  robust_percentiles: [0.0, 100.0]
+  point_size: 0.45

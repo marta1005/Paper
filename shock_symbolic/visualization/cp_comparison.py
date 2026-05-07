@@ -244,7 +244,7 @@ def save_critical_cp_grid_2d(
         n_cols = 3
         n_rows = len(snapshots)
     else:
-        n_cols = min(3, len(snapshots))
+        n_cols = min(3, int(np.ceil(np.sqrt(len(snapshots)))))
         n_rows = int(np.ceil(len(snapshots) / n_cols))
 
     selected_indices: list[np.ndarray] = []
