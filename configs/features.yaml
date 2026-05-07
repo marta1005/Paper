@@ -8,10 +8,17 @@ logging:
 case_filters:
   min_mach: 0.7
 features:
-  # For a first smoke run, keep this small. Set null for all indexed cases.
-  max_cases: 2
-  # kNN features are computed after optional per-case sampling.
-  max_points_per_case: 3000
+  # Production default: process all transonic cases in 2D projected grids.
+  mode: grid2d
+  clean_output: true
+  max_cases:
+  max_points_per_case:
+  projection:
+    surface: upper
+    normal_z_threshold: 0.0
+    x_bins: 384
+    y_bins: 192
+  # Used only for mode: pointwise/knn.
   k_neighbors: 16
   batch_size: 4096
   max_numpy_knn_points: 5000

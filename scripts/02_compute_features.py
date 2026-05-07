@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Compute pointwise physics/kNN features per CFD condition."""
+"""Compute symbolic-sensor features per CFD condition."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 from shock_symbolic.data.case_indexing import load_case_index
 from shock_symbolic.data.load_arrays import load_memmap_arrays, resolve_array_paths
 from shock_symbolic.data.snapshots import snapshot_from_case
+from shock_symbolic.features.grid2d_features import compute_snapshot_features_2d
 from shock_symbolic.features.pressure_features import compute_snapshot_features
 from shock_symbolic.utils.config import load_config
 from shock_symbolic.utils.io import save_csv
@@ -35,6 +36,7 @@ def main() -> None:
     feature_cfg = cfg.get("features", {})
     case_index_dir = Path(cfg.get("case_index_dir", "outputs/symbolic/case_index"))
     output_dir = Path(cfg.get("output_dir", "outputs/symbolic/features"))
+    clean_output = bool(feature_cfg.get("clean_output", False))
     splits = cfg.get("splits", ["train", "test"])
     rows = []
     for split in splits:
@@ -49,28 +51,37 @@ def main() -> None:
             cases = cases[: int(max_cases)]
         split_out = output_dir / split
         split_out.mkdir(parents=True, exist_ok=True)
+        if clean_output:
+            for old_file in split_out.glob("*.npz"):
+                old_file.unlink()
         x_key, y_key = f"X_{split}", f"Y_{split}"
         for idx, case in enumerate(cases):
             LOGGER.info("Computing features for %s (%s/%s)", case["case_id"], idx + 1, len(cases))
+            mode = str(feature_cfg.get("mode", "grid2d")).lower()
             snapshot = snapshot_from_case(
                 arrays[x_key],
                 arrays[y_key],
                 case,
-                max_points=feature_cfg.get("max_points_per_case"),
+                max_points=feature_cfg.get("max_points_per_case") if mode in {"pointwise", "knn"} else None,
                 seed=int(cfg.get("seed", 42)) + idx,
             )
-            features = compute_snapshot_features(
-                snapshot,
-                k_neighbors=int(feature_cfg.get("k_neighbors", 16)),
-                batch_size=int(feature_cfg.get("batch_size", 4096)),
-                max_numpy_knn_points=int(feature_cfg.get("max_numpy_knn_points", 20_000)),
-            )
+            if mode == "grid2d":
+                features = compute_snapshot_features_2d(snapshot, feature_cfg.get("projection", {}))
+            elif mode in {"pointwise", "knn"}:
+                features = compute_snapshot_features(
+                    snapshot,
+                    k_neighbors=int(feature_cfg.get("k_neighbors", 16)),
+                    batch_size=int(feature_cfg.get("batch_size", 4096)),
+                    max_numpy_knn_points=int(feature_cfg.get("max_numpy_knn_points", 20_000)),
+                )
+            else:
+                raise ValueError(f"Unsupported features.mode: {mode}")
             path = split_out / f"{case['case_id']}.npz"
             payload = dict(features)
             payload["case_id"] = np.asarray(case["case_id"])
             payload["split"] = np.asarray(split)
             np.savez_compressed(path, **payload)
-            rows.append({"split": split, "case_id": case["case_id"], "path": str(path), "n_points": int(features["Cp"].shape[0])})
+            rows.append({"split": split, "case_id": case["case_id"], "path": str(path), "n_points": int(features["Cp"].shape[0]), "mode": mode})
     save_csv(output_dir / "features_summary.csv", rows)
     print({"features_dir": str(output_dir), "n_cases": len(rows)})
 

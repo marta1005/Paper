@@ -47,6 +47,20 @@ pip install pandas scikit-learn scipy pyarrow pysr
 
 ## Command Order
 
+For the projected-2D production path, run everything in one command:
+
+```bash
+python scripts/09_run_2d_pipeline.py
+```
+
+This executes inspection, case indexing, 2D feature generation, pseudo-labels, symbolic table creation, PySR training, evaluation, export and the critical Cp grid. It is production-oriented by default: no debug case limit is enabled in the YAML configs.
+
+If you only want preprocessing/table/plots and do not want to launch PySR:
+
+```bash
+python scripts/09_run_2d_pipeline.py --skip-pysr
+```
+
 1. Inspect arrays:
 
 ```bash
@@ -59,7 +73,7 @@ python scripts/00_inspect_arrays.py --config configs/data.yaml
 python scripts/01_build_case_index.py --config configs/data.yaml
 ```
 
-3. Compute pointwise features:
+3. Compute projected 2D features:
 
 ```bash
 python scripts/02_compute_features.py --config configs/features.yaml
@@ -153,6 +167,20 @@ outputs/symbolic/evaluation/test/global_metrics.json
 
 ## Features
 
+By default, features are computed on projected 2D `x-y` grids, one grid per CFD condition and surface. This avoids the expensive pointwise kNN path and is the recommended production mode for the office machine:
+
+```yaml
+features:
+  mode: grid2d
+  max_cases:
+  projection:
+    surface: upper
+    x_bins: 384
+    y_bins: 192
+```
+
+The saved `.npz` files are still flattened valid-grid-cell tables, so the downstream symbolic regression steps do not change.
+
 Features are computed within each CFD condition only:
 
 - `Cp`
@@ -161,7 +189,7 @@ Features are computed within each CFD condition only:
 - `Cf_parallel`, using freestream direction projected onto the local tangent plane
 - `Cf_perp`
 - `Cf_angle_stream`
-- `grad_Cp_mag`, kNN weighted local finite difference in 3D
+- `grad_Cp_mag`, projected 2D finite-difference magnitude
 - `grad_Cp_streamwise`
 - `local_Cp_contrast`
 - `grad_Cf_mag`
@@ -170,7 +198,7 @@ Features are computed within each CFD condition only:
 - `nx`, `ny`, `nz`
 - `Mach`, `AoA`, `pi_scaled`
 
-If `scikit-learn` is installed, kNN uses `NearestNeighbors`. Without it, a NumPy fallback is used only for small sampled snapshots.
+The old kNN pointwise path is still available with `features.mode: pointwise`, but it is no longer the default.
 
 ## Labels
 
@@ -189,17 +217,16 @@ Separation labels use:
 
 ## Huge Data Notes
 
-The original arrays are opened with `mmap_mode="r"`. The heavy stage is kNN, so tune:
+The original arrays are opened with `mmap_mode="r"`. The default feature pipeline projects each case to 2D and processes all transonic cases:
 
 ```yaml
 features:
-  max_cases: 2
-  max_points_per_case: 3000
-  k_neighbors: 16
-  batch_size: 4096
+  mode: grid2d
+  max_cases:
+  projection:
+    x_bins: 384
+    y_bins: 192
 ```
-
-For full production runs, install `scikit-learn`, increase `max_points_per_case`, and set `max_cases: null`.
 
 The default feature config starts with `case_filters.min_mach: 0.7` so quick runs do not spend time on clearly subsonic cases when generating shock sensors.
 

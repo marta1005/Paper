@@ -2,6 +2,7 @@ features_dir: outputs/symbolic/features
 output_dir: outputs/symbolic/labels
 splits: [train, test]
 max_cases:
+clean_output: true
 logging:
   level: INFO
 shock:
@@ -15,6 +16,7 @@ separation:
   reverse_parallel_threshold: 0.0
   require_low_cf_for_reversal: false
 visualization:
-  max_cases: 1
+  # Diagnostic figures only; label generation still runs for every feature file.
+  max_plot_cases: 6
   max_points: 80000
   output_dir: outputs/symbolic/figures/labels

@@ -37,7 +37,9 @@ def main() -> None:
     features_dir = Path(cfg.get("features_dir", "outputs/symbolic/features"))
     output_dir = Path(cfg.get("output_dir", "outputs/symbolic/labels"))
     rows = []
-    plot_max_cases = int(cfg.get("visualization", {}).get("max_cases", 0))
+    clean_output = bool(cfg.get("clean_output", False))
+    viz_cfg = cfg.get("visualization", {})
+    plot_max_cases = int(viz_cfg.get("max_plot_cases", viz_cfg.get("max_cases", 0)))
     for split in cfg.get("splits", ["train", "test"]):
         files = sorted((features_dir / split).glob("*.npz"))
         max_cases = cfg.get("max_cases")
@@ -45,6 +47,9 @@ def main() -> None:
             files = files[: int(max_cases)]
         split_out = output_dir / split
         split_out.mkdir(parents=True, exist_ok=True)
+        if clean_output:
+            for old_file in split_out.glob("*.npz"):
+                old_file.unlink()
         for idx, feature_path in enumerate(files):
             LOGGER.info("Generating labels for %s", feature_path.stem)
             features = _load_npz(feature_path)
@@ -70,10 +75,10 @@ def main() -> None:
             )
             if idx < plot_max_cases:
                 save_case_scatter_suite(
-                    Path(cfg.get("visualization", {}).get("output_dir", "outputs/symbolic/figures/labels")) / split / feature_path.stem,
+                    Path(viz_cfg.get("output_dir", "outputs/symbolic/figures/labels")) / split / feature_path.stem,
                     features,
                     labels=payload,
-                    max_points=int(cfg.get("visualization", {}).get("max_points", 80_000)),
+                    max_points=int(viz_cfg.get("max_points", 80_000)),
                 )
     save_csv(output_dir / "labels_summary.csv", rows)
     print({"labels_dir": str(output_dir), "n_cases": len(rows)})

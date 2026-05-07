@@ -29,16 +29,16 @@ feature_names:
   - AoA
   - pi_scaled
 pysr:
-  niterations: 40
-  populations: 8
+  niterations: 200
+  populations: 16
   binary_operators: ["+", "-", "*", "/"]
   unary_operators: ["sqrt", "log", "abs"]
   model_selection: best
-  maxsize: 24
+  maxsize: 32
   progress: true
 evaluation:
   split: test
-  max_cases: 3
+  max_cases:
   output_dir: outputs/symbolic/evaluation
-  plot_max_cases: 2
+  plot_max_cases: 6
   plot_max_points: 80000

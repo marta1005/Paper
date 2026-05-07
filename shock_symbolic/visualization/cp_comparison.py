@@ -266,27 +266,48 @@ def save_critical_cp_grid_2d(
         err_lim = 1.0
     err_lim = max(err_lim, 1.0e-8)
 
-    fig_width = 14.0 if has_predictions else 4.8 * n_cols
-    fig_height = max(3.2, (2.7 if has_predictions else 3.2) * n_rows + 0.8)
+    fig_width = 16.2 if has_predictions else 4.8 * n_cols
+    fig_height = max(3.2, (2.65 if has_predictions else 3.2) * n_rows + 0.8)
     fig = plt.figure(figsize=(fig_width, fig_height))
-    outer = gridspec.GridSpec(n_rows, n_cols, figure=fig, hspace=0.38, wspace=0.22)
+    if has_predictions:
+        fig.subplots_adjust(left=0.035, right=0.992, bottom=0.045, top=0.93, hspace=0.42, wspace=0.18)
+        outer = gridspec.GridSpec(
+            n_rows,
+            n_cols + 1,
+            figure=fig,
+            hspace=0.42,
+            wspace=0.18,
+            width_ratios=[0.82, 3.0, 3.0, 3.0],
+        )
+    else:
+        fig.subplots_adjust(left=0.06, right=0.985, bottom=0.045, top=0.93, hspace=0.48, wspace=0.26)
+        outer = gridspec.GridSpec(n_rows, n_cols, figure=fig, hspace=0.48, wspace=0.26)
 
     for row, (case, snapshot, pred, idx) in enumerate(zip(cases, snapshots, cp_predictions, selected_indices)):
         x = np.asarray(snapshot["x"], dtype=np.float32)
         y = np.asarray(snapshot["y"], dtype=np.float32)
         cp_true = np.asarray(snapshot["Cp"], dtype=np.float32)
         row_title = f"{case['case_id']} | M={float(case['Mach']):.2f} | AoA={float(case['AoA']):.1f} | pi={float(case['pi_scaled']):.1f}"
+        row_label = (
+            f"{case['case_id']}\n"
+            f"M={float(case['Mach']):.2f}\n"
+            f"AoA={float(case['AoA']):.1f}\n"
+            f"pi={float(case['pi_scaled']):.1f}"
+        )
         fields: list[tuple[str, np.ndarray, str, float, float]] = [
-            ("Truth $C_p$", cp_true, "jet", float(cp_vmin), float(cp_vmax)),
+            ("$C_p$ real", cp_true, "jet", float(cp_vmin), float(cp_vmax)),
         ]
         if has_predictions and pred is not None:
             pred_arr = np.asarray(pred, dtype=np.float32)
-            fields.append(("Predicted $C_p$", pred_arr, "jet", float(cp_vmin), float(cp_vmax)))
-            fields.append(("Error", pred_arr - cp_true, "RdBu_r", -err_lim, err_lim))
+            fields.append(("$C_p$ predicho", pred_arr, "jet", float(cp_vmin), float(cp_vmax)))
+            fields.append(("Predicho - real", pred_arr - cp_true, "RdBu_r", -err_lim, err_lim))
 
         if has_predictions:
             cell_row = row
-            cell_col_offset = 0
+            cell_col_offset = 1
+            ax_meta = fig.add_subplot(outer[cell_row, 0])
+            ax_meta.axis("off")
+            ax_meta.text(0.98, 0.5, row_label, ha="right", va="center", fontsize=8, linespacing=1.25)
         else:
             cell_row = row // n_cols
             cell_col_offset = row % n_cols
@@ -297,13 +318,14 @@ def save_critical_cp_grid_2d(
             ax.set_aspect("equal", adjustable="box")
             ax.set_xlabel("x")
             ax.set_ylabel("y")
-            ax.set_title(label if has_predictions and row == 0 else row_title, fontsize=8, pad=5)
-            if has_predictions and col == 0:
-                ax.text(0.5, 1.02, row_title, transform=ax.transAxes, ha="center", va="bottom", fontsize=8)
+            if has_predictions:
+                ax.set_title(label if row == 0 else "", fontsize=8, pad=5)
+            else:
+                ax.set_title(row_title, fontsize=8, pad=5)
             cbar = fig.colorbar(sc, ax=ax, shrink=0.80, pad=0.015)
             cbar.ax.tick_params(labelsize=6)
 
-    fig.suptitle(title, fontsize=13, y=0.995)
+    fig.suptitle(title, fontsize=13, y=0.985)
     fig.savefig(out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     return {"path": str(out), "has_predictions": bool(has_predictions), "cases": row_metrics}
