@@ -119,7 +119,7 @@ By default this selects transonic cases (`Mach >= 0.7`), sorts by high Mach and 
 
 ```text
 row = critical CFD case
-columns = true Cp | predicted Cp | predicted - true
+columns = true Cp | predicted Cp | absolute error
 ```
 
 If `prediction.path` is empty, it produces a truth-only critical Cp grid so you can verify that the wing and critical cases are displayed correctly.

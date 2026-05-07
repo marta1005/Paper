@@ -20,7 +20,7 @@ from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 
 
-ERROR_CMAP = LinearSegmentedColormap.from_list("blue_gray_red", ["#2166ac", "#f2f2f2", "#b2182b"])
+ABS_ERROR_CMAP = LinearSegmentedColormap.from_list("gray_red_abs_error", ["#eeeeee", "#fdae61", "#d73027"])
 
 
 def sample_indices(n_points: int, max_points: int | None = None, seed: int = 42) -> np.ndarray:
@@ -166,16 +166,17 @@ def save_cp_comparison_2d(
     finite = np.isfinite(cp_values)
     vmin, vmax = np.percentile(cp_values[finite], robust_percentiles)
     err = cp_pred - cp_true
-    err_values = err[idx]
+    abs_err = np.abs(err)
+    err_values = abs_err[idx]
     finite_err = np.isfinite(err_values)
-    err_lim = float(np.percentile(np.abs(err_values[finite_err]), 99.0)) if np.any(finite_err) else 1.0
+    err_lim = float(np.percentile(err_values[finite_err], 99.0)) if np.any(finite_err) else 1.0
     err_lim = max(err_lim, 1.0e-8)
 
     fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.4), constrained_layout=True)
     fields = [
         ("Cp true", cp_true, cmap, vmin, vmax),
         ("Cp pred", cp_pred, cmap, vmin, vmax),
-        ("Cp pred - true", err, ERROR_CMAP, -err_lim, err_lim),
+        ("|Cp pred - true|", abs_err, ABS_ERROR_CMAP, 0.0, err_lim),
     ]
     for ax, (label, field, field_cmap, field_vmin, field_vmax) in zip(axes, fields):
         sc = ax.scatter(
@@ -218,7 +219,7 @@ def save_critical_cp_grid_2d(
     """Save a multi-case 2D grid of Cp truth/prediction/error maps.
 
     Rows correspond to CFD conditions. Columns are `Truth Cp`, `Predicted Cp`,
-    and `Prediction - Truth` when predictions are provided for every case;
+    and absolute prediction error when predictions are provided for every case;
     otherwise the grid contains only the true Cp maps.
     """
     if not cases:
@@ -256,7 +257,7 @@ def save_critical_cp_grid_2d(
         if pred is not None:
             pred_arr = np.asarray(pred, dtype=np.float32)
             cp_for_scale.append(pred_arr[idx])
-            err = pred_arr - cp_true
+            err = np.abs(pred_arr - cp_true)
             err_for_scale.append(err[idx])
             row_payload.update(cp_error_metrics(cp_true[mask], pred_arr[mask]))
         row_metrics.append(row_payload)
@@ -265,7 +266,7 @@ def save_critical_cp_grid_2d(
     cp_vmin, cp_vmax = np.percentile(cp_values, robust_percentiles) if cp_values.size else (-1.0, 1.0)
     if err_for_scale:
         err_values = np.concatenate([values[np.isfinite(values)] for values in err_for_scale if values.size])
-        err_lim = float(np.percentile(np.abs(err_values), 99.0)) if err_values.size else 1.0
+        err_lim = float(np.percentile(err_values, 99.0)) if err_values.size else 1.0
     else:
         err_lim = 1.0
     err_lim = max(err_lim, 1.0e-8)
@@ -304,7 +305,7 @@ def save_critical_cp_grid_2d(
         if has_predictions and pred is not None:
             pred_arr = np.asarray(pred, dtype=np.float32)
             fields.append(("$C_p$ predicho", pred_arr, "jet", float(cp_vmin), float(cp_vmax)))
-            fields.append(("Predicho - real", pred_arr - cp_true, ERROR_CMAP, -err_lim, err_lim))
+            fields.append(("Error absoluto", np.abs(pred_arr - cp_true), ABS_ERROR_CMAP, 0.0, err_lim))
 
         if has_predictions:
             cell_row = row
