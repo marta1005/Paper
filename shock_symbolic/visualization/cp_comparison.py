@@ -132,7 +132,7 @@ def save_cp_comparison_2d(
     title: str | None = None,
     cmap: str = "jet",
     robust_percentiles: tuple[float, float] = (1.0, 99.0),
-    point_size: float = 1.0,
+    point_size: float = 0.55,
 ) -> dict[str, float]:
     """Save a planform 2D Cp comparison plot and return metrics."""
     out = Path(output_path)
@@ -212,7 +212,7 @@ def save_critical_cp_grid_2d(
     max_points_per_case: int | None = 80_000,
     seed: int = 42,
     robust_percentiles: tuple[float, float] = (1.0, 99.0),
-    point_size: float = 0.9,
+    point_size: float = 0.55,
     title: str = "Critical ONERA CRM WBPN cases",
 ) -> dict[str, Any]:
     """Save a multi-case 2D grid of Cp truth/prediction/error maps.
