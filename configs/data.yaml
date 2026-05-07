@@ -1,0 +1,14 @@
+seed: 42
+data_dir: data
+logging:
+  level: INFO
+inspect:
+  sample_size: 250000
+case_index:
+  atol: 1.0e-7
+  batch_size: 1000000
+  # Keep null for all cases. Set a small integer for quick smoke runs.
+  max_cases_per_split:
+outputs:
+  inspect_json: outputs/symbolic/inspect/arrays.json
+  case_index_dir: outputs/symbolic/case_index

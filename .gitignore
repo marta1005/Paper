@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.pytest_cache/
+.matplotlib_cache/
+outputs/
+data/*.npy
+data/projected/

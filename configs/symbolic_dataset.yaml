@@ -1,0 +1,34 @@
+seed: 42
+split: train
+features_dir: outputs/symbolic/features
+labels_dir: outputs/symbolic/labels
+output_base: outputs/symbolic/tables/shock_symbolic_train
+target_name: shock_score
+max_cases:
+max_positive_per_case: 5000
+negative_ratio: 4.0
+feature_names:
+  - Cp
+  - Cfx
+  - Cfy
+  - Cfz
+  - Cf_mag
+  - Cf_parallel
+  - Cf_perp
+  - Cf_angle_stream
+  - grad_Cp_mag
+  - grad_Cp_streamwise
+  - local_Cp_contrast
+  - grad_Cf_mag
+  - local_Cf_contrast
+  - x
+  - y
+  - z
+  - nx
+  - ny
+  - nz
+  - Mach
+  - AoA
+  - pi_scaled
+logging:
+  level: INFO

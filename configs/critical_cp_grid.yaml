@@ -1,0 +1,38 @@
+seed: 42
+data_dir: data
+case_index_dir: outputs/symbolic/case_index
+split: test
+logging:
+  level: INFO
+title: Critical ONERA CRM WBPN Cp cases
+output_path: outputs/symbolic/figures/critical_cp_grid_test_upper.png
+
+# Option A: set explicit condition indices from the case index.
+condition_indices:
+
+# Option B: or set explicit case ids, e.g. [test_0012, test_0031].
+case_ids:
+
+# Option C: automatic critical selection.
+critical_selection:
+  min_mach: 0.7
+  min_abs_aoa: 0.0
+  sort_by: mach_abs_aoa
+  top_k: 6
+
+# Optional Cp predictions. Leave path empty to plot truth-only grid.
+prediction:
+  # Supported formats:
+  # - full split .npy/.npz with length equal to all test/train points
+  # - .npy/.npz with one current-case vector when plotting one case
+  # - .npz with per-case keys, e.g. test_0012, test_0013
+  path:
+  key:
+  column: 0
+
+plot:
+  surface: upper
+  normal_z_threshold: 0.0
+  max_points_per_case: 80000
+  robust_percentiles: [1.0, 99.0]
+  point_size: 0.75

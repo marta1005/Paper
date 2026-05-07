@@ -1,0 +1,20 @@
+features_dir: outputs/symbolic/features
+output_dir: outputs/symbolic/labels
+splits: [train, test]
+max_cases:
+logging:
+  level: INFO
+shock:
+  percentile: 98.5
+  min_mach: 0.7
+  score_lower_percentile: 50.0
+  score_upper_percentile: 99.5
+separation:
+  low_cf_percentile: 20.0
+  high_grad_cf_percentile: 95.0
+  reverse_parallel_threshold: 0.0
+  require_low_cf_for_reversal: false
+visualization:
+  max_cases: 1
+  max_points: 80000
+  output_dir: outputs/symbolic/figures/labels
