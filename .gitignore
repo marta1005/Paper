@@ -1,6 +1,10 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+.venv/
+.pip_cache/
+.vscode/
+*.egg-info/
 .pytest_cache/
 .matplotlib_cache/
 outputs/
