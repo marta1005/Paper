@@ -116,17 +116,21 @@ def main() -> None:
         )
 
     output_path = Path(cfg.get("output_path", "outputs/symbolic/figures/critical_cp_grid.png"))
+    plot_cfg = cfg.get("plot", {})
     payload = save_critical_cp_grid_2d(
         cases,
         snapshots,
         output_path,
         cp_predictions=predictions,
-        mask_config=cfg.get("plot", {}),
-        max_points_per_case=cfg.get("plot", {}).get("max_points_per_case", 80_000),
+        mask_config=plot_cfg,
+        max_points_per_case=plot_cfg.get("max_points_per_case", 80_000),
         seed=int(cfg.get("seed", 42)),
-        robust_percentiles=tuple(cfg.get("plot", {}).get("robust_percentiles", [1.0, 99.0])),
-        point_size=float(cfg.get("plot", {}).get("point_size", 0.9)),
+        robust_percentiles=tuple(plot_cfg.get("robust_percentiles", [1.0, 99.0])),
+        point_size=float(plot_cfg.get("point_size", 0.9)),
         title=str(cfg.get("title", "Critical ONERA CRM WBPN Cp cases")),
+        error_mode=str(plot_cfg.get("error_mode", "absolute")),
+        cp_scale=str(plot_cfg.get("cp_scale", "global")),
+        colorbar_orientation=str(plot_cfg.get("colorbar_orientation", "vertical")),
     )
     summary_path = output_path.with_suffix(".json")
     save_json(summary_path, payload)

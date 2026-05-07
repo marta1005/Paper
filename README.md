@@ -163,11 +163,14 @@ The symbolic-sensor prediction/error grid is saved to:
 outputs/symbolic/evaluation_cases_2_65_79_39/test/shock_prediction_grid.png
 ```
 
-The Cp-only selected grid is saved to:
+Once `prediction.path` is set to a real `Cp_pred`/`Y_pred` file, the selected Cp comparison grid is saved to:
 
 ```text
-outputs/symbolic/figures/cp_grid_test_cases_0002_0065_0079_0039.png
+outputs/symbolic/figures/cp_prediction_grid_test_cases_0002_0065_0079_0039.png
 ```
+
+This is the plot for Cp regression outputs: `Truth Cp | Predicted Cp | signed error`.
+The PySR sensor output is a shock indicator, not a Cp field.
 
 ## Main Outputs
 

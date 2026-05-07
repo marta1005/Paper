@@ -48,12 +48,12 @@ def save_symbolic_prediction_grid(
     rows: list[dict[str, object]],
     max_points: int = 80_000,
     seed: int = 42,
-    title: str = "PySR shock sensor: Cp distribution and absolute error",
+    title: str = "PySR shock sensor: Cp field, shock score and binary error",
 ) -> None:
-    """Save a compact multi-case grid comparing shock labels and predictions.
+    """Save a compact multi-case grid for the symbolic shock sensor.
 
-    Each row is one CFD case. Columns show the Cp field, the Cp field with
-    the predicted shock footprint overlaid, and the absolute binary error.
+    This plot is intentionally not a Cp-prediction plot: the middle column is
+    the symbolic shock score, and the right column is the binary mask error.
     """
     if not rows:
         return
@@ -73,7 +73,7 @@ def save_symbolic_prediction_grid(
     grid = fig.add_gridspec(n_rows, 4, width_ratios=[0.9, 3.0, 3.0, 3.0], hspace=0.42, wspace=0.18)
     fig.subplots_adjust(left=0.035, right=0.992, bottom=0.045, top=0.92)
 
-    column_titles = ["$C_p$ real", "$C_p$ + predicted", "error absoluto"]
+    column_titles = ["$C_p$ real", "shock score", "error máscara"]
     for row_idx, item in enumerate(rows):
         features = item["features"]
         labels = item["labels"]
@@ -108,26 +108,21 @@ def save_symbolic_prediction_grid(
         cbar = fig.colorbar(sc_cp, ax=axes[0], shrink=0.80, pad=0.015)
         cbar.ax.tick_params(labelsize=6)
 
+        finite_scores = scores[np.isfinite(scores)]
+        score_vmin = float(np.min(finite_scores)) if finite_scores.size else 0.0
+        score_vmax = float(np.max(finite_scores)) if finite_scores.size else 1.0
+        if np.isclose(score_vmin, score_vmax):
+            score_vmin, score_vmax = 0.0, max(score_vmax, 1.0)
         sc_pred = axes[1].scatter(
             x[idx],
             y[idx],
-            c=cp[idx],
+            c=scores[idx],
             s=point_size,
-            cmap=CP_CMAP,
-            vmin=cp_vmin,
-            vmax=cp_vmax,
+            cmap="viridis",
+            vmin=score_vmin,
+            vmax=score_vmax,
             linewidths=0,
         )
-        pred_idx = idx_set & pred_mask
-        if np.any(pred_idx):
-            axes[1].scatter(
-                x[pred_idx],
-                y[pred_idx],
-                c="black",
-                s=max(point_size * 4.0, 1.2),
-                alpha=0.82,
-                linewidths=0,
-            )
         cbar = fig.colorbar(sc_pred, ax=axes[1], shrink=0.80, pad=0.015)
         cbar.ax.tick_params(labelsize=6)
 

@@ -21,6 +21,7 @@ import numpy as np
 
 
 ABS_ERROR_CMAP = LinearSegmentedColormap.from_list("gray_red_abs_error", ["#eeeeee", "#fdae61", "#d73027"])
+SIGNED_ERROR_CMAP = "RdBu_r"
 
 
 def finite_minmax(values: np.ndarray, default: tuple[float, float] = (-1.0, 1.0)) -> tuple[float, float]:
@@ -135,6 +136,15 @@ def cp_error_metrics(cp_true: np.ndarray, cp_pred: np.ndarray) -> dict[str, floa
     }
 
 
+def case_display_index(case_id: Any) -> str:
+    """Return a compact numeric case label when the id follows `split_0001`."""
+    text = str(case_id)
+    suffix = text.rsplit("_", maxsplit=1)[-1]
+    if suffix.isdigit():
+        return str(int(suffix))
+    return text
+
+
 def save_cp_comparison_2d(
     snapshot: dict[str, np.ndarray],
     output_path: str | Path,
@@ -227,11 +237,14 @@ def save_critical_cp_grid_2d(
     robust_percentiles: tuple[float, float] = (1.0, 99.0),
     point_size: float = 0.55,
     title: str = "Critical ONERA CRM WBPN cases",
+    error_mode: str = "absolute",
+    cp_scale: str = "global",
+    colorbar_orientation: str = "vertical",
 ) -> dict[str, Any]:
     """Save a multi-case 2D grid of Cp truth/prediction/error maps.
 
     Rows correspond to CFD conditions. Columns are `Truth Cp`, `Predicted Cp`,
-    and absolute prediction error when predictions are provided for every case;
+    and prediction error when predictions are provided for every case;
     otherwise the grid contains only the true Cp maps.
     """
     if not cases:
@@ -240,6 +253,15 @@ def save_critical_cp_grid_2d(
     out.parent.mkdir(parents=True, exist_ok=True)
     cp_predictions = cp_predictions or [None] * len(snapshots)
     has_predictions = all(pred is not None for pred in cp_predictions)
+    error_mode = str(error_mode).lower()
+    if error_mode not in {"absolute", "signed"}:
+        raise ValueError("error_mode must be one of: absolute, signed")
+    cp_scale = str(cp_scale).lower()
+    if cp_scale not in {"global", "per_case"}:
+        raise ValueError("cp_scale must be one of: global, per_case")
+    colorbar_orientation = str(colorbar_orientation).lower()
+    if colorbar_orientation not in {"vertical", "horizontal"}:
+        raise ValueError("colorbar_orientation must be one of: vertical, horizontal")
     if has_predictions:
         n_cols = 3
         n_rows = len(snapshots)
@@ -268,9 +290,28 @@ def save_critical_cp_grid_2d(
         }
         if pred is not None:
             pred_arr = np.asarray(pred, dtype=np.float32)
+            row_cp_values = np.concatenate([cp_true[idx], pred_arr[idx]])
+            row_cp_vmin, row_cp_vmax = finite_minmax(row_cp_values)
+            signed_err = pred_arr - cp_true
+            if error_mode == "signed":
+                err_values = signed_err[idx]
+                finite_err = err_values[np.isfinite(err_values)]
+                err_lim = float(np.max(np.abs(finite_err))) if finite_err.size else 1.0
+                err_lim = err_lim if err_lim > 1.0e-8 else 1.0
+                row_payload["error_vmin"] = -err_lim
+                row_payload["error_vmax"] = err_lim
+                err_for_scale.append(np.abs(err_values))
+            else:
+                err_values = np.abs(signed_err[idx])
+                finite_err = err_values[np.isfinite(err_values)]
+                err_lim = float(np.max(finite_err)) if finite_err.size else 1.0
+                err_lim = err_lim if err_lim > 1.0e-8 else 1.0
+                row_payload["error_vmin"] = 0.0
+                row_payload["error_vmax"] = err_lim
+                err_for_scale.append(err_values)
             cp_for_scale.append(pred_arr[idx])
-            err = np.abs(pred_arr - cp_true)
-            err_for_scale.append(err[idx])
+            row_payload["cp_vmin"] = row_cp_vmin
+            row_payload["cp_vmax"] = row_cp_vmax
             row_payload.update(cp_error_metrics(cp_true[mask], pred_arr[mask]))
         row_metrics.append(row_payload)
 
@@ -283,10 +324,14 @@ def save_critical_cp_grid_2d(
         err_lim = 1.0
     err_lim = max(err_lim, 1.0e-8)
 
-    fig_width = 16.2 if has_predictions else 4.8 * n_cols
-    fig_height = max(3.2, (2.65 if has_predictions else 3.2) * n_rows + 0.8)
+    horizontal_pred_layout = bool(has_predictions and colorbar_orientation == "horizontal")
+    fig_width = 13.6 if horizontal_pred_layout else (16.2 if has_predictions else 4.8 * n_cols)
+    fig_height = max(3.2, (3.15 if horizontal_pred_layout else (2.65 if has_predictions else 3.2)) * n_rows + 0.8)
     fig = plt.figure(figsize=(fig_width, fig_height))
-    if has_predictions:
+    if horizontal_pred_layout:
+        fig.subplots_adjust(left=0.035, right=0.985, bottom=0.045, top=0.92, hspace=0.70, wspace=0.25)
+        outer = gridspec.GridSpec(n_rows, n_cols, figure=fig, hspace=0.70, wspace=0.25)
+    elif has_predictions:
         fig.subplots_adjust(left=0.035, right=0.992, bottom=0.045, top=0.93, hspace=0.42, wspace=0.18)
         outer = gridspec.GridSpec(
             n_rows,
@@ -305,21 +350,46 @@ def save_critical_cp_grid_2d(
         y = np.asarray(snapshot["y"], dtype=np.float32)
         cp_true = np.asarray(snapshot["Cp"], dtype=np.float32)
         row_title = f"{case['case_id']} | M={float(case['Mach']):.2f} | AoA={float(case['AoA']):.1f} | pi={float(case['pi_scaled']):.1f}"
+        compact_row_title = (
+            f"cond {case_display_index(case['case_id'])} | M={float(case['Mach']):.2f} | "
+            f"AoA={float(case['AoA']):.1f} | Pi={float(case['pi_scaled']):.1f}"
+        )
+        if pred is not None and "mae" in row_metrics[row]:
+            compact_row_title = f"{compact_row_title} | MAE={float(row_metrics[row]['mae']):.4f}"
         row_label = (
             f"{case['case_id']}\n"
             f"M={float(case['Mach']):.2f}\n"
             f"AoA={float(case['AoA']):.1f}\n"
             f"pi={float(case['pi_scaled']):.1f}"
         )
-        fields: list[tuple[str, np.ndarray, str, float, float]] = [
-            ("$C_p$ real", cp_true, "jet", float(cp_vmin), float(cp_vmax)),
+        if has_predictions and cp_scale == "per_case":
+            row_cp_vmin = float(row_metrics[row].get("cp_vmin", cp_vmin))
+            row_cp_vmax = float(row_metrics[row].get("cp_vmax", cp_vmax))
+        else:
+            row_cp_vmin = float(cp_vmin)
+            row_cp_vmax = float(cp_vmax)
+
+        fields: list[tuple[str, np.ndarray, str, float, float, str]] = [
+            ("Truth $C_p$", cp_true, "jet", row_cp_vmin, row_cp_vmax, "Truth $C_p$"),
         ]
         if has_predictions and pred is not None:
             pred_arr = np.asarray(pred, dtype=np.float32)
-            fields.append(("$C_p$ predicho", pred_arr, "jet", float(cp_vmin), float(cp_vmax)))
-            fields.append(("Error absoluto", np.abs(pred_arr - cp_true), ABS_ERROR_CMAP, 0.0, err_lim))
+            signed_err = pred_arr - cp_true
+            if error_mode == "signed":
+                field_err_vmin = float(row_metrics[row].get("error_vmin", -err_lim))
+                field_err_vmax = float(row_metrics[row].get("error_vmax", err_lim))
+                error_label = f"Error [{field_err_vmin:.3f}, {field_err_vmax:.3f}]"
+                fields.append(("Predicted $C_p$", pred_arr, "jet", row_cp_vmin, row_cp_vmax, "Predicted $C_p$"))
+                fields.append((error_label, signed_err, SIGNED_ERROR_CMAP, field_err_vmin, field_err_vmax, error_label))
+            else:
+                field_err_vmax = float(row_metrics[row].get("error_vmax", err_lim))
+                fields.append(("Predicted $C_p$", pred_arr, "jet", row_cp_vmin, row_cp_vmax, "Predicted $C_p$"))
+                fields.append(("Absolute error", np.abs(signed_err), ABS_ERROR_CMAP, 0.0, field_err_vmax, "Absolute error"))
 
-        if has_predictions:
+        if horizontal_pred_layout:
+            cell_row = row
+            cell_col_offset = 0
+        elif has_predictions:
             cell_row = row
             cell_col_offset = 1
             ax_meta = fig.add_subplot(outer[cell_row, 0])
@@ -329,17 +399,32 @@ def save_critical_cp_grid_2d(
             cell_row = row // n_cols
             cell_col_offset = row % n_cols
 
-        for col, (label, values, cmap, vmin, vmax) in enumerate(fields):
+        for col, (label, values, cmap, vmin, vmax, colorbar_label) in enumerate(fields):
             ax = fig.add_subplot(outer[cell_row, cell_col_offset + col])
             sc = ax.scatter(x[idx], y[idx], c=values[idx], s=point_size, cmap=cmap, vmin=vmin, vmax=vmax, linewidths=0)
             ax.set_aspect("equal", adjustable="box")
-            ax.set_xlabel("x")
-            ax.set_ylabel("y")
-            if has_predictions:
+            if horizontal_pred_layout:
+                ax.set_axis_off()
+            else:
+                ax.set_xlabel("x")
+                ax.set_ylabel("y")
+            if horizontal_pred_layout:
+                if col == 1:
+                    ax.set_title(f"{compact_row_title}\n{label}", fontsize=7, pad=5)
+                else:
+                    ax.set_title(label, fontsize=8, pad=5)
+            elif has_predictions:
                 ax.set_title(label if row == 0 else "", fontsize=8, pad=5)
             else:
                 ax.set_title(row_title, fontsize=8, pad=5)
-            cbar = fig.colorbar(sc, ax=ax, shrink=0.80, pad=0.015)
+            cbar = fig.colorbar(
+                sc,
+                ax=ax,
+                shrink=0.92 if horizontal_pred_layout else 0.80,
+                pad=0.06 if horizontal_pred_layout else 0.015,
+                orientation=colorbar_orientation,
+            )
+            cbar.set_label(colorbar_label, size=7 if horizontal_pred_layout else 8)
             cbar.ax.tick_params(labelsize=6)
 
     fig.suptitle(title, fontsize=13, y=0.985)

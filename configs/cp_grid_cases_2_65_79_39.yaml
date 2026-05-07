@@ -5,7 +5,7 @@ split: test
 logging:
   level: INFO
 title: Selected ONERA CRM WBPN Cp cases
-output_path: outputs/symbolic/figures/cp_grid_test_cases_0002_0065_0079_0039.png
+output_path: outputs/symbolic/figures/cp_prediction_grid_test_cases_0002_0065_0079_0039.png
 
 # Explicit order requested by the user.
 case_ids:
@@ -26,4 +26,8 @@ plot:
   normal_z_threshold: 0.0
   max_points_per_case: 100000
   robust_percentiles: [0.0, 100.0]
-  point_size: 0.45
+  point_size: 0.35
+  # Style for true-Cp / predicted-Cp / signed-error figures.
+  error_mode: signed
+  cp_scale: per_case
+  colorbar_orientation: horizontal
