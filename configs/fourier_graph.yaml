@@ -1,0 +1,35 @@
+seed: 42
+output_dir: outputs/fourier_graph
+data:
+  data_dir: data
+  val_fraction: 0.2
+  seed: 42
+graph:
+  train_graph_path: processed/graphs/train_knn_graph.npz
+  k_neighbors: 16
+  build_if_missing: true
+shock_score:
+  train_path: processed/shock_scores/train_shock_scores.npz
+scaling:
+  enabled: false
+  scaler_dir: processed/scalers/fourier_graph
+model:
+  name: fourier_graph
+  kwargs:
+    input_dim: 9
+    fourier_num_frequencies: 6
+    graph_hidden_dim: 128
+    graph_out_dim: 128
+    hidden_dim: 128
+    depth: 3
+training:
+  epochs: 30
+  batch_size: 1024
+  lr: 0.001
+  weight_decay: 0.000001
+loss:
+  global: 1.0
+  mae: 0.0
+  weighted: 0.0
+  shock: 0.0
+  residual: 0.0

@@ -1,264 +1,173 @@
-# Shock Symbolic Sensor
+# Shock-Aware Cp Prediction for ONERA CRM WBPN
 
-Pointwise/scattered pipeline for an interpretable symbolic shock-footprint sensor on ONERA CRM WBPN CFD data, following the pointwise array convention of the ONERA CRM WBPN database paper: <https://arxiv.org/abs/2505.06265>.
+Proyecto Python/PyTorch para predecir `Cp` sobre datos de superficie pointwise/scattered de ONERA CRM WBPN. El objetivo científico es reducir el suavizado de ondas de choque que aparece en MLPs pointwise estándar al combinar Fourier features, contexto local kNN y un sensor simbólico deployable.
 
-This repository now focuses on a symbolic sensor rather than a final neural network. It loads the native pointwise arrays:
+## Datos
+
+El pipeline espera:
 
 ```text
 data/
   X_train.npy
   X_test.npy
-  Y_train.npy or Ytrain.npy
-  Y_test.npy or Ytest.npy
+  Ytrain.npy
+  Ytest.npy
 ```
 
-Column convention:
+Columnas de `X`: `x, y, z, nx, ny, nz, Mach, AoA, pi`. Columnas de `Y`: `Cp, Cfx, Cfy, Cfz`. Los arrays se cargan con `np.load(..., mmap_mode="r")`.
+
+El split nunca se hace por punto. Train/test vienen de los archivos originales, y la validación se crea separando condiciones CFD completas agrupadas por `(Mach, AoA, pi)`.
+
+## Arquitectura
+
+El modelo principal es `SymbolicGatedGraphFourierResidualCpNet`:
 
 ```text
-X[:, 0:3] = x, y, z
-X[:, 3:6] = nx, ny, nz
-X[:, 6]   = Mach
-X[:, 7]   = AoA
-X[:, 8]   = pi_scaled
-
-Y[:, 0] = Cp
-Y[:, 1] = Cfx
-Y[:, 2] = Cfy
-Y[:, 3] = Cfz
+chi = symbolic_shock_sensor(X)
+phi = FourierFeatures(X)
+h_graph = LocalGraphEncoder(X, phi, neighbors)
+Cp_smooth = SmoothCpNetwork(X, phi, h_graph)
+delta_Cp = ShockResidualNetwork(X, phi, h_graph, chi)
+Cp_pred = Cp_smooth + chi * delta_Cp
 ```
 
-The code accepts the current local aliases `Ytrain.npy` and `Ytest.npy`.
+También incluye:
 
-## Installation
+- `BaselineCpMLP`: MLP pointwise.
+- `FourierGraphCpNet`: Fourier + kNN/message passing sin sensor.
+- `SymbolicWeightedGraphFourierCpNet`: usa `chi` para ponderar la loss.
+- `OracleGatedGraphFourierResidualCpNet`: upper-bound usando el oracle score como gate.
 
-Core smoke tests only require NumPy, PyYAML and Matplotlib:
+## Oracle vs Sensor Deployable
 
-```bash
-pip install -e .
+El `oracle_shock_score` usa `Cp` real y solo se calcula en preparación, entrenamiento, validación y análisis:
+
+```text
+grad_Cp_mag_approx(i) = mean_j |Cp_j - Cp_i| / (||r_j - r_i|| + eps)
 ```
 
-For the full symbolic pipeline:
+Se normaliza por percentiles dentro de cada condición CFD y se umbraliza para crear `shock_label`.
 
-```bash
-pip install pandas scikit-learn scipy pyarrow pysr
+El sensor deployable se entrena con PySR:
+
+```text
+chi = g_symbolic(x, y, z, nx, ny, nz, Mach, AoA, pi)
 ```
 
-`PySR` is imported only by `shock_symbolic/symbolic/pysr_trainer.py`. If it is missing, the training script fails with a clear message; the data, feature, label and table stages still work.
+No usa `Cp` real en inferencia. Si PySR no está instalado o Julia no está configurado, el wrapper falla con un error claro; el resto del framework puede seguir en modo oracle o dummy para tests.
 
-## Command Order
+## Grafo kNN
 
-For the projected-2D production path, run everything in one command:
+`KNNGraphBuilder` agrupa por `(Mach, AoA, pi)` y construye vecinos usando solo coordenadas 3D `x, y, z`. Nunca mezcla puntos de condiciones diferentes. Guarda `neighbor_indices` y `neighbor_distances` en `processed/graphs/`.
 
-```bash
-python scripts/09_run_2d_pipeline.py
+## Losses
+
+El entrenamiento implementa MSE global, MAE, Huber, MSE ponderada por sensor, loss de región shock con oracle, loss non-shock, regularización del residual y una loss gradient-aware:
+
+```text
+L_grad = mean_i mean_j |
+  ((Cp_pred_j - Cp_pred_i) - (Cp_true_j - Cp_true_i)) / (dist_ij + eps)
+|
 ```
 
-This executes inspection, case indexing, 2D feature generation, pseudo-labels, symbolic table creation, PySR training, evaluation, export and the critical Cp grid. It is production-oriented by default: no debug case limit is enabled in the YAML configs.
+`L_grad` está implementada para tensores completos con grafo kNN; los YAML de ejemplo la dejan desactivada en el loop mini-batch básico para mantener el smoke training ligero.
 
-If you only want preprocessing/table/plots and do not want to launch PySR:
+## Orden de Ejecución
 
-```bash
-python scripts/09_run_2d_pipeline.py --skip-pysr
-```
-
-1. Inspect arrays:
+1. Inspeccionar arrays:
 
 ```bash
 python scripts/00_inspect_arrays.py --config configs/data.yaml
 ```
 
-2. Build CFD condition index:
+2. Construir índice de casos:
 
 ```bash
 python scripts/01_build_case_index.py --config configs/data.yaml
 ```
 
-3. Compute projected 2D features:
+3. Construir grafos kNN:
 
 ```bash
-python scripts/02_compute_features.py --config configs/features.yaml
+python scripts/02_build_knn_graphs.py --config configs/graph.yaml
 ```
 
-4. Generate pseudo-labels:
+4. Calcular oracle shock score:
 
 ```bash
-python scripts/03_generate_labels.py --config configs/labels.yaml
+python scripts/03_compute_oracle_shock_score.py --config configs/shock_score.yaml
 ```
 
-5. Build symbolic regression dataset:
+5. Construir dataset del sensor simbólico:
 
 ```bash
-python scripts/04_build_symbolic_dataset.py --config configs/symbolic_dataset.yaml
+python scripts/04_build_symbolic_sensor_dataset.py --config configs/symbolic_sensor.yaml
 ```
 
-6. Train symbolic sensor with PySR:
+6. Entrenar sensor simbólico:
 
 ```bash
-python scripts/05_train_symbolic_sensor.py --config configs/pysr.yaml
+python scripts/05_train_symbolic_sensor.py --config configs/symbolic_sensor.yaml
 ```
 
-7. Evaluate symbolic sensor:
+7. Entrenar baseline MLP:
 
 ```bash
-python scripts/06_evaluate_symbolic_sensor.py --config configs/pysr.yaml
+python scripts/06_train_cp_model.py --config configs/baseline_mlp.yaml
 ```
 
-8. Export formula:
+8. Entrenar Fourier Graph model:
 
 ```bash
-python scripts/07_export_sensor.py --config configs/pysr.yaml
+python scripts/06_train_cp_model.py --config configs/fourier_graph.yaml
 ```
 
-9. Plot a grid of critical Cp cases:
+9. Entrenar Symbolic Weighted Graph model:
 
 ```bash
-python scripts/08_plot_critical_cp_grid.py --config configs/critical_cp_grid.yaml
+python scripts/06_train_cp_model.py --config configs/symbolic_weighted_graph.yaml
 ```
 
-By default this selects transonic cases (`Mach >= 0.7`), sorts by high Mach and high `|AoA|`, and plots the upper surface in 2D planform. If you provide `prediction.path` in `configs/critical_cp_grid.yaml`, the grid becomes:
-
-```text
-row = critical CFD case
-columns = true Cp | predicted Cp | absolute error
-```
-
-If `prediction.path` is empty, it produces a truth-only critical Cp grid so you can verify that the wing and critical cases are displayed correctly.
-
-Accepted prediction files:
-
-```text
-1. .npy or .npz full split vector:
-   cp_pred.shape == (N_split_points,)
-
-2. .npy or .npz full split output:
-   y_pred.shape == (N_split_points, 4)
-   column: 0 selects Cp
-
-3. .npz with per-case arrays:
-   test_0012 = cp_pred_for_case_0012
-   test_0013 = cp_pred_for_case_0013
-```
-
-For future model outputs, set:
-
-```yaml
-prediction:
-  path: outputs/path/to/your_cp_prediction.npy
-  key:
-  column: 0
-```
-
-Selected cases `2, 65, 79, 39`:
+10. Entrenar modelo principal:
 
 ```bash
-python scripts/02_compute_features.py --config configs/features_cases_2_65_79_39.yaml
-python scripts/03_generate_labels.py --config configs/labels_cases_2_65_79_39.yaml
-python scripts/06_evaluate_symbolic_sensor.py --config configs/pysr_cases_2_65_79_39.yaml
-python scripts/08_plot_critical_cp_grid.py --config configs/cp_grid_cases_2_65_79_39.yaml
+python scripts/06_train_cp_model.py --config configs/symbolic_gated_residual.yaml
 ```
 
-The symbolic-sensor prediction/error grid is saved to:
+11. Entrenar upper-bound oracle:
 
-```text
-outputs/symbolic/evaluation_cases_2_65_79_39/test/shock_prediction_grid.png
+```bash
+python scripts/06_train_cp_model.py --config configs/oracle_gated_residual.yaml
 ```
 
-Once `prediction.path` is set to a real `Cp_pred`/`Y_pred` file, the selected Cp comparison grid is saved to:
+12. Evaluar:
 
-```text
-outputs/symbolic/figures/cp_prediction_grid_test_cases_0002_0065_0079_0039.png
+```bash
+python scripts/07_evaluate_cp_model.py --config configs/evaluation.yaml
 ```
 
-This is the plot for Cp regression outputs: `Truth Cp | Predicted Cp | signed error`.
-The PySR sensor output is a shock indicator, not a Cp field.
+13. Generar plots:
 
-## Main Outputs
-
-```text
-outputs/symbolic/inspect/arrays.json
-outputs/symbolic/case_index/case_index_train.csv
-outputs/symbolic/features/{train,test}/{case_id}.npz
-outputs/symbolic/labels/{train,test}/{case_id}.npz
-outputs/symbolic/tables/shock_symbolic_train.csv or .parquet
-outputs/symbolic/pysr/equations.csv
-outputs/symbolic/pysr/best_equation.txt
-outputs/symbolic/pysr/best_equation.tex
-outputs/symbolic/pysr/best_sensor.json
-outputs/symbolic/pysr/threshold.json
-outputs/symbolic/evaluation/test/per_case_metrics.csv
-outputs/symbolic/evaluation/test/global_metrics.json
-outputs/symbolic/evaluation/test/shock_prediction_grid.png
+```bash
+python scripts/08_plot_predictions.py --config configs/evaluation.yaml
 ```
 
-## Features
+14. Exportar sensor simbólico:
 
-By default, features are computed on projected 2D `x-y` grids, one grid per CFD condition and surface. This avoids the expensive pointwise kNN path and is the recommended production mode for the office machine:
-
-```yaml
-features:
-  mode: grid2d
-  max_cases:
-  projection:
-    surface: upper
-    x_bins: 384
-    y_bins: 192
+```bash
+python scripts/09_export_symbolic_sensor.py --config configs/symbolic_sensor.yaml
 ```
 
-The saved `.npz` files are still flattened valid-grid-cell tables, so the downstream symbolic regression steps do not change.
+## Métricas
 
-Features are computed within each CFD condition only:
-
-- `Cp`
-- `Cfx`, `Cfy`, `Cfz`
-- `Cf_mag`
-- `Cf_parallel`, using freestream direction projected onto the local tangent plane
-- `Cf_perp`
-- `Cf_angle_stream`
-- `grad_Cp_mag`, projected 2D finite-difference magnitude
-- `grad_Cp_streamwise`
-- `local_Cp_contrast`
-- `grad_Cf_mag`
-- `local_Cf_contrast`
-- `x`, `y`, `z`
-- `nx`, `ny`, `nz`
-- `Mach`, `AoA`, `pi_scaled`
-
-The old kNN pointwise path is still available with `features.mode: pointwise`, but it is no longer the default.
-
-## Labels
-
-Shock pseudo-labels are generated per condition:
-
-- compute `grad_Cp_mag`,
-- threshold by percentile, e.g. `98.5`,
-- optionally suppress labels for `Mach <= 0.7`,
-- compute continuous `shock_score` by robust percentile normalization.
-
-Separation labels use:
-
-- low `Cf_mag`,
-- high `grad_Cf_mag`,
-- reversed `Cf_parallel`.
-
-## Huge Data Notes
-
-The original arrays are opened with `mmap_mode="r"`. The default feature pipeline projects each case to 2D and processes all transonic cases:
-
-```yaml
-features:
-  mode: grid2d
-  max_cases:
-  projection:
-    x_bins: 384
-    y_bins: 192
-```
-
-The default feature config starts with `case_filters.min_mach: 0.7` so quick runs do not spend time on clearly subsonic cases when generating shock sensors.
+Se guardan métricas globales `MAE_Cp`, `RMSE_Cp`, `R2_Cp`, métricas por caso con `wrMAE_Cp`, métricas shock/non-shock y métricas del sensor (`correlation`, `MAE`, `F1`, `precision`, `recall`, `IoU`).
 
 ## Tests
+
+Los tests usan datos sintéticos con varias condiciones, superficie fake y salto brusco de `Cp`:
 
 ```bash
 pytest
 ```
 
-Tests use small synthetic point clouds and do not require PySR, pandas or scikit-learn.
+Incluyen smoke training de 1 epoch para `BaselineCpMLP`, `FourierGraphCpNet` y `SymbolicGatedGraphFourierResidualCpNet`.

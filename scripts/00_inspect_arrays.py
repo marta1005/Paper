@@ -1,32 +1,29 @@
 #!/usr/bin/env python
-"""Inspect ONERA CRM WBPN pointwise arrays."""
-
 from __future__ import annotations
 
 import argparse
-import sys
-from pathlib import Path
+import json
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from shock_symbolic.data.load_arrays import inspect_arrays
-from shock_symbolic.utils.config import load_config
-from shock_symbolic.utils.io import save_json
-from shock_symbolic.utils.logging import configure_logging
+import _bootstrap  # noqa: F401
+from cp_shock_project.data.case_indexing import build_case_index, case_table
+from cp_shock_project.data.load_arrays import X_COLUMNS, Y_COLUMNS, inspect_array, load_arrays, validate_shapes
+from cp_shock_project.utils.config import load_config
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     args = parser.parse_args()
     cfg = load_config(args.config)
-    configure_logging(cfg.get("logging", {}).get("level", "INFO"))
-    payload = inspect_arrays(cfg.get("data_dir", "data"), sample_size=int(cfg.get("inspect", {}).get("sample_size", 250_000)))
-    out = Path(cfg.get("outputs", {}).get("inspect_json", "outputs/symbolic/inspect/arrays.json"))
-    save_json(out, payload)
-    print({"inspect_json": str(out), "X_train_shape": payload["X_train"]["shape"], "Y_train_shape": payload["Y_train"]["shape"]})
+    arrays = load_arrays(cfg.get("data_dir", "data"), mmap=True)
+    for name, X, Y in [("train", arrays.X_train, arrays.Y_train), ("test", arrays.X_test, arrays.Y_test)]:
+        validate_shapes(X, Y)
+        print(json.dumps(inspect_array(f"X_{name}", X, X_COLUMNS), indent=2))
+        print(json.dumps(inspect_array(f"Y_{name}", Y, Y_COLUMNS), indent=2))
+        idx = build_case_index(X)
+        table = case_table(idx)
+        print(f"{name}: {idx.n_cases} unique conditions")
+        print(table[["case_id", "Mach", "AoA", "pi", "n_points"]].describe(include="all").to_string())
 
 
 if __name__ == "__main__":

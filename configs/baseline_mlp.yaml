@@ -1,0 +1,33 @@
+seed: 42
+output_dir: outputs/baseline_mlp
+data:
+  data_dir: data
+  val_fraction: 0.2
+  seed: 42
+  max_train_points:
+  max_val_points:
+graph:
+  build_if_missing: false
+shock_score:
+  train_path: processed/shock_scores/train_shock_scores.npz
+scaling:
+  enabled: false
+  scaler_dir: processed/scalers/baseline_mlp
+model:
+  name: baseline_mlp
+  kwargs:
+    input_dim: 9
+    hidden_dim: 128
+    depth: 4
+    dropout: 0.0
+training:
+  epochs: 20
+  batch_size: 4096
+  lr: 0.001
+  weight_decay: 0.000001
+loss:
+  global: 1.0
+  mae: 0.0
+  weighted: 0.0
+  shock: 0.0
+  residual: 0.0

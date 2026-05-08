@@ -1,0 +1,33 @@
+seed: 42
+output_dir: outputs/evaluation
+checkpoint: outputs/symbolic_gated_residual/checkpoints/best.pt
+data:
+  data_dir: data
+  max_eval_points:
+graph:
+  test_graph_path: processed/graphs/test_knn_graph.npz
+  k_neighbors: 16
+  build_if_missing: true
+shock_score:
+  test_path: processed/shock_scores/test_shock_scores.npz
+symbolic_sensor:
+  path: outputs/symbolic_sensor/best_sensor.json
+  dummy_value: 0.0
+scaling:
+  enabled: false
+  scaler_dir: processed/scalers/symbolic_gated_residual
+model:
+  name: symbolic_gated_residual
+  kwargs:
+    input_dim: 9
+    fourier_num_frequencies: 6
+    graph_hidden_dim: 128
+    graph_out_dim: 128
+    hidden_dim: 128
+    depth: 3
+evaluation:
+  batch_size: 1024
+  shock_threshold: 0.5
+plots:
+  views: [xy, xz]
+  baseline_predictions_npz:

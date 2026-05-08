@@ -1,0 +1,10 @@
+data_dir: data
+train_graph_path: processed/graphs/train_knn_graph.npz
+test_graph_path: processed/graphs/test_knn_graph.npz
+train_output_path: processed/shock_scores/train_shock_scores.npz
+test_output_path: processed/shock_scores/test_shock_scores.npz
+lower_percentile: 50.0
+upper_percentile: 99.5
+label_percentile: 98.5
+low_mach_downweight:
+low_mach_threshold: 0.7

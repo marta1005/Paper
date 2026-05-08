@@ -1,9 +1,11 @@
 numpy
-PyYAML
-matplotlib
 pandas
-scikit-learn
-scipy
 pyarrow
-pysr
+scipy
+scikit-learn
+torch
+matplotlib
+PyYAML
 pytest
+# Optional for symbolic sensor training:
+pysr

@@ -1,25 +1,6 @@
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "shock-symbolic"
-version = "0.1.0"
-description = "Pointwise symbolic shock sensor pipeline for ONERA CRM WBPN CFD data."
-readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [
-  "numpy",
-  "PyYAML",
-  "matplotlib",
-]
-
-[project.optional-dependencies]
-symbolic = ["pandas", "scikit-learn", "scipy", "pyarrow", "pysr"]
-dev = ["pytest"]
-
-[tool.setuptools.packages.find]
-include = ["shock_symbolic*"]
-
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120

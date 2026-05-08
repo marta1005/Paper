@@ -1,0 +1,7 @@
+data_dir: data
+k_neighbors: 16
+max_cases:
+max_points_per_case:
+chunk_size: 50000
+train_graph_path: processed/graphs/train_knn_graph.npz
+test_graph_path: processed/graphs/test_knn_graph.npz

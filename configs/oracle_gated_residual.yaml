@@ -1,0 +1,36 @@
+seed: 42
+output_dir: outputs/oracle_gated_residual
+data:
+  data_dir: data
+  val_fraction: 0.2
+  seed: 42
+graph:
+  train_graph_path: processed/graphs/train_knn_graph.npz
+  k_neighbors: 16
+  build_if_missing: true
+shock_score:
+  train_path: processed/shock_scores/train_shock_scores.npz
+scaling:
+  enabled: false
+  scaler_dir: processed/scalers/oracle_gated_residual
+model:
+  name: oracle_gated_residual
+  kwargs:
+    input_dim: 9
+    fourier_num_frequencies: 6
+    graph_hidden_dim: 128
+    graph_out_dim: 128
+    hidden_dim: 128
+    depth: 3
+training:
+  epochs: 40
+  batch_size: 1024
+  lr: 0.001
+  weight_decay: 0.000001
+loss:
+  global: 1.0
+  mae: 0.0
+  weighted: 1.0
+  sensor_weight: 5.0
+  shock: 1.0
+  residual: 0.01

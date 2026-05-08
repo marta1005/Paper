@@ -1,16 +1,18 @@
-from __future__ import annotations
-
 import numpy as np
 
-from shock_symbolic.data.case_indexing import build_case_index_for_split
+from cp_shock_project.data.case_indexing import build_case_index, case_table
+
+from tests.conftest import make_synthetic_arrays
 
 
-def test_case_indexing_contiguous_conditions() -> None:
-    x = np.zeros((10, 9), dtype=np.float32)
-    x[:4, 6:9] = [0.8, 2.0, 1.0]
-    x[4:, 6:9] = [0.85, 4.0, 1.0]
-    cases = build_case_index_for_split(x, "train", batch_size=3)
-    assert len(cases) == 2
-    assert cases[0]["start"] == 0
-    assert cases[0]["stop"] == 4
-    assert cases[1]["n_points"] == 6
+def test_case_indexing_groups_complete_conditions():
+    X, _ = make_synthetic_arrays(n_cases=4, points_per_case=8)
+    index = build_case_index(X)
+    assert index.n_cases == 4
+    table = case_table(index)
+    assert table["n_points"].tolist() == [8, 8, 8, 8]
+    for cid in range(index.n_cases):
+        idx = index.indices_for_case(cid)
+        assert np.unique(X[idx, 6]).size == 1
+        assert np.unique(X[idx, 7]).size == 1
+        assert np.unique(X[idx, 8]).size == 1
