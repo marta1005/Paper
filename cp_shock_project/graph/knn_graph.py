@@ -14,18 +14,52 @@ class KNNGraph:
     neighbor_indices: np.ndarray
     neighbor_distances: np.ndarray
     selected_indices: np.ndarray
+    coordinate_columns: tuple[int, ...] = (0, 1)
+    projection: str = "xy"
 
 
 class KNNGraphBuilder:
-    """Build kNN graphs within each CFD case using 3D surface coordinates."""
+    """Build kNN graphs within each CFD case using configurable surface projections."""
 
-    def __init__(self, k_neighbors: int = 16, algorithm: str = "auto", eps: float = 1e-12, chunk_size: int | None = None):
+    PROJECTIONS = {
+        "xy": (0, 1),
+        "xz": (0, 2),
+        "yz": (1, 2),
+        "xyz": (0, 1, 2),
+    }
+
+    def __init__(
+        self,
+        k_neighbors: int = 16,
+        algorithm: str = "auto",
+        eps: float = 1e-12,
+        chunk_size: int | None = None,
+        projection: str = "xy",
+        coordinate_columns: tuple[int, ...] | list[int] | None = None,
+    ):
         if k_neighbors < 1:
             raise ValueError("k_neighbors must be >= 1")
         self.k_neighbors = int(k_neighbors)
         self.algorithm = algorithm
         self.eps = eps
         self.chunk_size = chunk_size
+        self.projection = projection.lower()
+        self.coordinate_columns = self._resolve_columns(self.projection, coordinate_columns)
+
+    @classmethod
+    def _resolve_columns(cls, projection: str, coordinate_columns: tuple[int, ...] | list[int] | None) -> tuple[int, ...]:
+        if coordinate_columns is not None:
+            cols = tuple(int(c) for c in coordinate_columns)
+        else:
+            if projection not in cls.PROJECTIONS:
+                valid = ", ".join(sorted(cls.PROJECTIONS))
+                raise ValueError(f"Unknown projection {projection!r}. Valid options: {valid}")
+            cols = cls.PROJECTIONS[projection]
+        if len(cols) not in (2, 3):
+            raise ValueError("coordinate_columns must contain 2 or 3 columns")
+        if any(c < 0 or c > 2 for c in cols):
+            raise ValueError("coordinate_columns must refer to geometry columns 0=x, 1=y, 2=z")
+        return cols
 
     def build(
         self,
@@ -48,7 +82,7 @@ class KNNGraphBuilder:
             selected.append(idx)
             if idx.size <= 1:
                 continue
-            coords = np.asarray(X[idx, :3], dtype=np.float64)
+            coords = np.asarray(X[np.ix_(idx, self.coordinate_columns)], dtype=np.float64)
             n_neighbors = min(self.k_neighbors + 1, idx.size)
             nn = NearestNeighbors(n_neighbors=n_neighbors, algorithm=self.algorithm)
             nn.fit(coords)
@@ -63,4 +97,10 @@ class KNNGraphBuilder:
                 neighbor_indices[target, :k_eff] = idx[local]
                 neighbor_distances[target, :k_eff] = np.maximum(dist, self.eps).astype(np.float32)
         selected_indices = np.concatenate(selected).astype(np.int64) if selected else np.array([], dtype=np.int64)
-        return KNNGraph(neighbor_indices=neighbor_indices, neighbor_distances=neighbor_distances, selected_indices=selected_indices)
+        return KNNGraph(
+            neighbor_indices=neighbor_indices,
+            neighbor_distances=neighbor_distances,
+            selected_indices=selected_indices,
+            coordinate_columns=self.coordinate_columns,
+            projection=self.projection,
+        )

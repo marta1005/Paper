@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from cp_shock_project.symbolic.expression import VARIABLES, SymbolicExpression
+from cp_shock_project.symbolic.expression import FEATURE_COLUMNS, SYMBOLIC_VARIABLES, SymbolicExpression
 from cp_shock_project.utils.io import save_json
 
 
@@ -27,9 +27,11 @@ def train_pysr_sensor(
 
     train = pd.read_parquet(train_parquet)
     val = pd.read_parquet(val_parquet)
-    X_train = train[VARIABLES].to_numpy(dtype=np.float64)
+    train = train.rename(columns={"pi": "pi_param"})
+    val = val.rename(columns={"pi": "pi_param"})
+    X_train = train[SYMBOLIC_VARIABLES].to_numpy(dtype=np.float64)
     y_train = train["oracle_shock_score"].to_numpy(dtype=np.float64)
-    X_val = val[VARIABLES].to_numpy(dtype=np.float64)
+    X_val = val[SYMBOLIC_VARIABLES].to_numpy(dtype=np.float64)
     y_val = val["oracle_shock_score"].to_numpy(dtype=np.float64)
     kwargs = {
         "niterations": 40,
@@ -40,7 +42,7 @@ def train_pysr_sensor(
     }
     kwargs.update(pysr_kwargs or {})
     model = PySRRegressor(**kwargs)
-    model.fit(X_train, y_train, variable_names=VARIABLES)
+    model.fit(X_train, y_train, variable_names=SYMBOLIC_VARIABLES)
     root = Path(out_dir)
     root.mkdir(parents=True, exist_ok=True)
     equations = model.equations_
@@ -57,7 +59,8 @@ def train_pysr_sensor(
     save_json(
         {
             "expression": best_expr,
-            "variables": VARIABLES,
+            "variables": SYMBOLIC_VARIABLES,
+            "feature_columns": FEATURE_COLUMNS,
             "clip_min": 0.0,
             "clip_max": 1.0,
             "val_mae": val_mae,

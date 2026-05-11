@@ -91,7 +91,12 @@ def prepare_datasets(config: dict[str, Any], split: str = "train") -> tuple[CpSu
     if graph_path and Path(graph_path).exists():
         graph = load_graph(graph_path)
     elif graph_cfg.get("build_if_missing", True):
-        graph = KNNGraphBuilder(k_neighbors=int(graph_cfg.get("k_neighbors", 8)), chunk_size=graph_cfg.get("chunk_size")).build(
+        graph = KNNGraphBuilder(
+            k_neighbors=int(graph_cfg.get("k_neighbors", 8)),
+            chunk_size=graph_cfg.get("chunk_size"),
+            projection=graph_cfg.get("projection", "xy"),
+            coordinate_columns=graph_cfg.get("coordinate_columns"),
+        ).build(
             X,
             case_index,
             max_cases=graph_cfg.get("max_cases"),

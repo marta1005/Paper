@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from cp_shock_project.symbolic.expression import VARIABLES
+from cp_shock_project.symbolic.expression import SYMBOLIC_VARIABLES
 
 
 def balanced_sensor_dataframe(
@@ -34,7 +34,7 @@ def balanced_sensor_dataframe(
     else:
         chosen = np.concatenate(chosen_parts)
         rng.shuffle(chosen)
-    df = pd.DataFrame(np.asarray(X[chosen, :9], dtype=np.float32), columns=VARIABLES)
+    df = pd.DataFrame(np.asarray(X[chosen, :9], dtype=np.float32), columns=SYMBOLIC_VARIABLES)
     df["oracle_shock_score"] = score[chosen].astype(np.float32)
     if case_ids is not None:
         df["case_id"] = np.asarray(case_ids)[chosen]

@@ -13,7 +13,12 @@ from cp_shock_project.utils.config import load_config
 
 def build_one(X, split: str, cfg: dict) -> None:
     index = build_case_index(X)
-    graph = KNNGraphBuilder(k_neighbors=int(cfg.get("k_neighbors", 16)), chunk_size=cfg.get("chunk_size")).build(
+    graph = KNNGraphBuilder(
+        k_neighbors=int(cfg.get("k_neighbors", 16)),
+        chunk_size=cfg.get("chunk_size"),
+        projection=cfg.get("projection", "xy"),
+        coordinate_columns=cfg.get("coordinate_columns"),
+    ).build(
         X,
         index,
         max_cases=cfg.get("max_cases"),
@@ -21,7 +26,7 @@ def build_one(X, split: str, cfg: dict) -> None:
     )
     path = cfg.get(f"{split}_graph_path", f"processed/graphs/{split}_knn_graph.npz")
     save_graph(graph, path)
-    print(f"Saved {split} graph to {path}")
+    print(f"Saved {split} {graph.projection} graph to {path}")
 
 
 def main() -> None:

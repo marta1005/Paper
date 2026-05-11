@@ -7,5 +7,6 @@ torch
 matplotlib
 PyYAML
 pytest
+gplearn
 # Optional for symbolic sensor training:
 pysr

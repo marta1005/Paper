@@ -5,8 +5,9 @@ data:
   val_fraction: 0.2
   seed: 42
 graph:
-  train_graph_path: processed/graphs/train_knn_graph.npz
+  train_graph_path: processed/graphs/train_knn_graph_xy.npz
   k_neighbors: 16
+  projection: xy
   build_if_missing: true
 shock_score:
   train_path: processed/shock_scores/train_shock_scores.npz

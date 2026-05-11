@@ -48,17 +48,28 @@ grad_Cp_mag_approx(i) = mean_j |Cp_j - Cp_i| / (||r_j - r_i|| + eps)
 
 Se normaliza por percentiles dentro de cada condición CFD y se umbraliza para crear `shock_label`.
 
-El sensor deployable se entrena con PySR:
+El sensor deployable se entrena por defecto con `gplearn`, para evitar la dependencia de Julia/PySR en entornos bloqueados:
 
 ```text
-chi = g_symbolic(x, y, z, nx, ny, nz, Mach, AoA, pi)
+chi = g_symbolic(x, y, z, nx, ny, nz, Mach, AoA, pi_param)
 ```
 
-No usa `Cp` real en inferencia. Si PySR no está instalado o Julia no está configurado, el wrapper falla con un error claro; el resto del framework puede seguir en modo oracle o dummy para tests.
+No usa `Cp` real en inferencia. La columna `X[:, 8]` se renombra internamente a `pi_param` porque `pi` es un nombre reservado en librerías simbólicas. PySR sigue disponible como backend opcional cambiando `backend: pysr` en `configs/symbolic_sensor.yaml`.
 
 ## Grafo kNN
 
-`KNNGraphBuilder` agrupa por `(Mach, AoA, pi)` y construye vecinos usando solo coordenadas 3D `x, y, z`. Nunca mezcla puntos de condiciones diferentes. Guarda `neighbor_indices` y `neighbor_distances` en `processed/graphs/`.
+`KNNGraphBuilder` agrupa por `(Mach, AoA, pi)` y construye vecinos con una proyección configurable. Por defecto usa `projection: xy`, que trabaja en planta 2D y es más ligero que el grafo 3D completo. Nunca mezcla puntos de condiciones diferentes. Guarda `neighbor_indices` y `neighbor_distances` en `processed/graphs/`.
+
+Opciones disponibles en `configs/graph.yaml`:
+
+```yaml
+projection: xy   # planta: x-y, recomendado para empezar
+# projection: xz # perfil lateral
+# projection: yz # sección y-z
+# projection: xyz # grafo 3D completo
+```
+
+Si cambias la proyección, borra o cambia el nombre del `.npz` de grafo para no reutilizar un grafo antiguo.
 
 ## Losses
 
@@ -108,6 +119,12 @@ python scripts/04_build_symbolic_sensor_dataset.py --config configs/symbolic_sen
 
 ```bash
 python scripts/05_train_symbolic_sensor.py --config configs/symbolic_sensor.yaml
+```
+
+Por defecto este comando usa `gplearn`. Para instalarlo en la venv:
+
+```bash
+python -m pip install gplearn
 ```
 
 7. Entrenar baseline MLP:

@@ -5,8 +5,9 @@ data:
   data_dir: data
   max_eval_points:
 graph:
-  test_graph_path: processed/graphs/test_knn_graph.npz
+  test_graph_path: processed/graphs/test_knn_graph_xy.npz
   k_neighbors: 16
+  projection: xy
   build_if_missing: true
 shock_score:
   test_path: processed/shock_scores/test_shock_scores.npz
