@@ -8,7 +8,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-from cp_shock_project.data.case_indexing import build_case_index
+from cp_shock_project.data.case_indexing import build_case_index, load_case_index
 from cp_shock_project.data.dataset import CpSurfaceDataset, DatasetScalers
 from cp_shock_project.data.load_arrays import load_arrays
 from cp_shock_project.data.splits import point_indices_for_cases, train_val_case_split
@@ -35,7 +35,11 @@ from cp_shock_project.utils.seed import seed_everything
 
 
 def device_auto() -> torch.device:
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
 
 
 def batch_to_device(batch: dict[str, torch.Tensor], device: torch.device) -> dict[str, torch.Tensor]:
@@ -80,17 +84,53 @@ def load_optional_vector(path: str | None, key: str | None = None) -> np.ndarray
     return data[first]
 
 
+def _load_or_build_case_index(X: np.ndarray, config: dict[str, Any], split: str) -> Any:
+    data_cfg = config.get("data", {})
+    case_index_dir = Path(data_cfg.get("case_index_dir", "processed/case_indices"))
+    case_index_path = data_cfg.get(f"{split}_case_index_path", case_index_dir / f"{split}_indices.npz")
+    if case_index_path and Path(case_index_path).exists():
+        print(f"[prepare] loading {split} case index: {case_index_path}", flush=True)
+        case_index = load_case_index(case_index_path)
+        if case_index.case_ids.shape[0] == X.shape[0]:
+            return case_index
+        print(
+            f"[prepare] ignored case index with {case_index.case_ids.shape[0]} rows; current X has {X.shape[0]} rows",
+            flush=True,
+        )
+    print(f"[prepare] building {split} case index from X; this can be slow for full arrays", flush=True)
+    return build_case_index(X)
+
+
+def _needs_oracle_score(config: dict[str, Any], split: str) -> bool:
+    model_name = config.get("model", {}).get("name", "")
+    if model_name == "oracle_gated_residual":
+        return True
+    loss_cfg = config.get("loss", {})
+    if split == "train" and (float(loss_cfg.get("shock", 0.0)) > 0.0 or float(loss_cfg.get("nonshock", 0.0)) > 0.0):
+        return True
+    return split != "train" and bool(config.get("shock_score", {}).get("test_path"))
+
+
+def _needs_symbolic_chi(config: dict[str, Any], split: str) -> bool:
+    sensor_cfg = config.get("symbolic_sensor", {})
+    return bool(sensor_cfg.get("chi_train_path" if split == "train" else "chi_test_path"))
+
+
 def prepare_datasets(config: dict[str, Any], split: str = "train") -> tuple[CpSurfaceDataset, CpSurfaceDataset | None, Any]:
     data_cfg = config.get("data", {})
+    print(f"[prepare] loading {split} arrays", flush=True)
     arrays = load_arrays(data_cfg.get("data_dir", "data"), mmap=True)
     X = arrays.X_train if split == "train" else arrays.X_test
     Y = arrays.Y_train if split == "train" else arrays.Y_test
-    case_index = build_case_index(X)
+    print(f"[prepare] X_{split} shape={X.shape}, Y_{split} shape={Y.shape}", flush=True)
+    case_index = _load_or_build_case_index(X, config, split)
     graph_cfg = config.get("graph", {})
     graph_path = graph_cfg.get("train_graph_path" if split == "train" else "test_graph_path")
     if graph_path and Path(graph_path).exists():
+        print(f"[prepare] loading {split} graph: {graph_path}", flush=True)
         graph = load_graph(graph_path)
     elif graph_cfg.get("build_if_missing", True):
+        print(f"[prepare] building {split} kNN graph", flush=True)
         graph = KNNGraphBuilder(
             k_neighbors=int(graph_cfg.get("k_neighbors", 8)),
             chunk_size=graph_cfg.get("chunk_size"),
@@ -105,8 +145,16 @@ def prepare_datasets(config: dict[str, Any], split: str = "train") -> tuple[CpSu
     else:
         graph = None
     shock_cfg = config.get("shock_score", {})
-    oracle = load_optional_vector(shock_cfg.get("train_path" if split == "train" else "test_path"), key="oracle_shock_score")
-    symbolic_chi = load_optional_vector(config.get("symbolic_sensor", {}).get("chi_train_path" if split == "train" else "chi_test_path"), key="symbolic_chi")
+    oracle = None
+    if _needs_oracle_score(config, split):
+        shock_path = shock_cfg.get("train_path" if split == "train" else "test_path")
+        print(f"[prepare] loading {split} oracle shock score: {shock_path}", flush=True)
+        oracle = load_optional_vector(shock_path, key="oracle_shock_score")
+    symbolic_chi = None
+    if _needs_symbolic_chi(config, split):
+        chi_path = config.get("symbolic_sensor", {}).get("chi_train_path" if split == "train" else "chi_test_path")
+        print(f"[prepare] loading {split} symbolic chi: {chi_path}", flush=True)
+        symbolic_chi = load_optional_vector(chi_path, key="symbolic_chi")
     scaling_cfg = config.get("scaling", {})
     scalers = DatasetScalers()
     scaler_dir = Path(scaling_cfg.get("scaler_dir", "processed/scalers"))
@@ -138,6 +186,7 @@ def prepare_datasets(config: dict[str, Any], split: str = "train") -> tuple[CpSu
         train_idx = train_idx[: int(data_cfg["max_train_points"])]
     if data_cfg.get("max_val_points"):
         val_idx = val_idx[: int(data_cfg["max_val_points"])]
+    print(f"[prepare] train points={len(train_idx)}, val points={len(val_idx)}", flush=True)
     if scaling_cfg.get("enabled", False):
         scaler_dir.mkdir(parents=True, exist_ok=True)
         x_scaler = StandardScaler().fit(np.asarray(X[train_idx, :9], dtype=np.float32))
@@ -162,12 +211,13 @@ def run_epoch(
     optimizer: torch.optim.Optimizer | None,
     device: torch.device,
     lambdas: dict[str, float],
+    log_every_batches: int = 0,
 ) -> dict[str, float]:
     training = optimizer is not None
     model.train(training)
     totals: dict[str, float] = {}
     n = 0
-    for batch in loader:
+    for batch_idx, batch in enumerate(loader, start=1):
         batch = batch_to_device(batch, device)
         with torch.set_grad_enabled(training):
             outputs = model(**batch)
@@ -180,6 +230,12 @@ def run_epoch(
         n += bs
         for key, value in losses.items():
             totals[key] = totals.get(key, 0.0) + float(value.detach().cpu()) * bs
+        if log_every_batches > 0 and batch_idx % log_every_batches == 0:
+            mode = "train" if training else "val"
+            print(
+                f"[{mode}] batch {batch_idx}/{len(loader)} total={float(losses['total'].detach().cpu()):.6g}",
+                flush=True,
+            )
     return {k: v / max(n, 1) for k, v in totals.items()}
 
 
@@ -210,28 +266,35 @@ def train_from_config(config: dict[str, Any]) -> dict[str, float]:
     metrics_dir = ensure_dir(output_dir / "metrics")
     save_config(config, output_dir / "config_resolved.yaml")
     train_ds, val_ds, _ = prepare_datasets(config, split="train")
-    train_loader = DataLoader(train_ds, batch_size=int(config.get("training", {}).get("batch_size", 256)), shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_ds, batch_size=int(config.get("training", {}).get("batch_size", 256)), shuffle=False, num_workers=0) if val_ds is not None else None
+    training_cfg = config.get("training", {})
+    batch_size = int(training_cfg.get("batch_size", 256))
+    print(f"[train] creating dataloaders batch_size={batch_size}", flush=True)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=int(training_cfg.get("num_workers", 0)))
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=int(training_cfg.get("num_workers", 0))) if val_ds is not None else None
     device = device_auto()
+    print(f"[train] using device={device}", flush=True)
     model = build_model(config).to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=float(config.get("training", {}).get("lr", 1e-3)), weight_decay=float(config.get("training", {}).get("weight_decay", 1e-6)))
-    epochs = int(config.get("training", {}).get("epochs", 1))
+    opt = torch.optim.AdamW(model.parameters(), lr=float(training_cfg.get("lr", 1e-3)), weight_decay=float(training_cfg.get("weight_decay", 1e-6)))
+    epochs = int(training_cfg.get("epochs", 1))
+    log_every_batches = int(training_cfg.get("log_every_batches", 100))
     lambdas = config.get("loss", {})
     train_rows = []
     val_rows = []
     best_val = float("inf")
     best_metrics: dict[str, float] = {}
     for epoch in range(1, epochs + 1):
-        train_metrics = run_epoch(model, train_loader, opt, device, lambdas)
+        print(f"[train] epoch {epoch}/{epochs} start", flush=True)
+        train_metrics = run_epoch(model, train_loader, opt, device, lambdas, log_every_batches=log_every_batches)
         train_metrics["epoch"] = epoch
         train_rows.append(train_metrics)
         if val_loader is not None:
-            val_metrics = run_epoch(model, val_loader, None, device, lambdas)
+            val_metrics = run_epoch(model, val_loader, None, device, lambdas, log_every_batches=0)
             val_metrics["epoch"] = epoch
             val_rows.append(val_metrics)
             score = val_metrics["total"]
         else:
             score = train_metrics["total"]
+        print(f"[train] epoch {epoch}/{epochs} done train_total={train_metrics['total']:.6g} score={score:.6g}", flush=True)
         save_checkpoint(ckpt_dir / "last.pt", model, opt, epoch, {"score": score}, config)
         if score < best_val:
             best_val = score
