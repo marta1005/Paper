@@ -17,12 +17,30 @@ class _FourierGraphBase(nn.Module):
         fourier_num_frequencies: int = 6,
         graph_hidden_dim: int = 128,
         graph_out_dim: int = 128,
+        graph_rel_dim: int = 2,
         dropout: float = 0.0,
+        fourier_variables_to_encode: tuple[int, ...] | list[int] | None = None,
+        fourier_direct_variables: tuple[int, ...] | list[int] | None = None,
     ):
         super().__init__()
-        self.fourier = FourierFeatureEncoder(input_dim=input_dim, num_frequencies=fourier_num_frequencies)
+        if fourier_variables_to_encode is None:
+            fourier_variables_to_encode = (0, 1, 2, 6, 7, 8) if input_dim >= 9 else (0, 1, 5, 6, 7)
+        if fourier_direct_variables is None:
+            fourier_direct_variables = (3, 4, 5) if input_dim >= 9 else (2, 3, 4)
+        self.fourier = FourierFeatureEncoder(
+            input_dim=input_dim,
+            num_frequencies=fourier_num_frequencies,
+            variables_to_encode=fourier_variables_to_encode,
+            direct_variables=fourier_direct_variables,
+        )
         node_dim = input_dim + self.fourier.output_dim
-        self.graph = LocalGraphEncoder(node_dim=node_dim, hidden_dim=graph_hidden_dim, out_dim=graph_out_dim, dropout=dropout)
+        self.graph = LocalGraphEncoder(
+            node_dim=node_dim,
+            hidden_dim=graph_hidden_dim,
+            out_dim=graph_out_dim,
+            dropout=dropout,
+            rel_dim=graph_rel_dim,
+        )
         self.combined_dim = input_dim + self.fourier.output_dim + graph_out_dim
 
     def encode(

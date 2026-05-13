@@ -123,6 +123,10 @@ def prepare_datasets(config: dict[str, Any], split: str = "train") -> tuple[CpSu
     X = arrays.X_train if split == "train" else arrays.X_test
     Y = arrays.Y_train if split == "train" else arrays.Y_test
     print(f"[prepare] X_{split} shape={X.shape}, Y_{split} shape={Y.shape}", flush=True)
+    features_cfg = config.get("features", {})
+    input_columns = features_cfg.get("input_columns")
+    if input_columns is not None:
+        print(f"[prepare] using model input columns={input_columns}", flush=True)
     case_index = _load_or_build_case_index(X, config, split)
     graph_cfg = config.get("graph", {})
     graph_path = graph_cfg.get("train_graph_path" if split == "train" else "test_graph_path")
@@ -177,6 +181,7 @@ def prepare_datasets(config: dict[str, Any], split: str = "train") -> tuple[CpSu
             oracle_shock_score=oracle,
             symbolic_chi=symbolic_chi,
             scalers=scalers,
+            input_columns=input_columns,
         )
         return ds, None, case_index
     train_cases, val_cases = train_val_case_split(case_index, data_cfg.get("val_fraction", 0.2), data_cfg.get("seed", 42))
@@ -189,7 +194,8 @@ def prepare_datasets(config: dict[str, Any], split: str = "train") -> tuple[CpSu
     print(f"[prepare] train points={len(train_idx)}, val points={len(val_idx)}", flush=True)
     if scaling_cfg.get("enabled", False):
         scaler_dir.mkdir(parents=True, exist_ok=True)
-        x_scaler = StandardScaler().fit(np.asarray(X[train_idx, :9], dtype=np.float32))
+        cols = tuple(int(c) for c in input_columns) if input_columns is not None else tuple(range(9))
+        x_scaler = StandardScaler().fit(np.asarray(X[np.ix_(train_idx, cols)], dtype=np.float32))
         cp_scaler = StandardScaler().fit(np.asarray(Y[train_idx, 0:1], dtype=np.float32))
         x_scaler.save(scaling_cfg.get("x_scaler_path", scaler_dir / "x_scaler.json"))
         cp_scaler.save(scaling_cfg.get("cp_scaler_path", scaler_dir / "cp_scaler.json"))
@@ -201,6 +207,7 @@ def prepare_datasets(config: dict[str, Any], split: str = "train") -> tuple[CpSu
         oracle_shock_score=oracle,
         symbolic_chi=symbolic_chi,
         scalers=scalers,
+        input_columns=input_columns,
     )
     return CpSurfaceDataset(X, Y, indices=train_idx, **common), CpSurfaceDataset(X, Y, indices=val_idx, **common), case_index
 

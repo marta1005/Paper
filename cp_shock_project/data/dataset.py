@@ -28,6 +28,7 @@ class CpSurfaceDataset(Dataset):
         oracle_shock_score: np.ndarray | None = None,
         symbolic_chi: np.ndarray | None = None,
         scalers: DatasetScalers | None = None,
+        input_columns: list[int] | tuple[int, ...] | None = None,
     ):
         self.X = X
         self.Y = Y
@@ -38,6 +39,7 @@ class CpSurfaceDataset(Dataset):
         self.oracle_shock_score = oracle_shock_score
         self.symbolic_chi = symbolic_chi
         self.scalers = scalers or DatasetScalers()
+        self.input_columns = tuple(int(c) for c in input_columns) if input_columns is not None else tuple(range(9))
 
     def __len__(self) -> int:
         return int(self.indices.shape[0])
@@ -52,10 +54,14 @@ class CpSurfaceDataset(Dataset):
             return self.scalers.cp_scaler.transform(cp.reshape(-1, 1)).reshape(-1)
         return cp
 
+    def _select_input_columns(self, x: np.ndarray) -> np.ndarray:
+        return np.asarray(x[..., self.input_columns], dtype=np.float32)
+
     def __getitem__(self, item: int) -> dict[str, torch.Tensor]:
         idx = int(self.indices[item])
         x_raw = np.asarray(self.X[idx], dtype=np.float32).copy()
-        x = np.asarray(self._transform_x(x_raw[None, :])[0], dtype=np.float32).copy()
+        x_selected = self._select_input_columns(x_raw)
+        x = np.asarray(self._transform_x(x_selected[None, :])[0], dtype=np.float32).copy()
         cp = np.asarray([self.Y[idx, 0]], dtype=np.float32)
         cp = np.asarray(self._transform_cp(cp), dtype=np.float32)
         out: dict[str, torch.Tensor] = {
@@ -75,7 +81,8 @@ class CpSurfaceDataset(Dataset):
             valid = nidx >= 0
             safe_nidx = np.where(valid, nidx, idx)
             nx_raw = np.asarray(self.X[safe_nidx], dtype=np.float32).copy()
-            nx = np.asarray(self._transform_x(nx_raw), dtype=np.float32).copy()
+            nx_selected = self._select_input_columns(nx_raw)
+            nx = np.asarray(self._transform_x(nx_selected), dtype=np.float32).copy()
             out["neighbor_indices"] = torch.from_numpy(nidx)
             out["neighbor_X"] = torch.from_numpy(nx)
             out["neighbor_X_raw"] = torch.from_numpy(nx_raw)

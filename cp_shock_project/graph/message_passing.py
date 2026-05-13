@@ -18,10 +18,13 @@ def mlp(sizes: list[int], activation: type[nn.Module] = nn.SiLU, dropout: float 
 class LocalGraphEncoder(nn.Module):
     """Lightweight message passing over fixed kNN neighborhoods."""
 
-    def __init__(self, node_dim: int, hidden_dim: int = 128, out_dim: int = 128, dropout: float = 0.0):
+    def __init__(self, node_dim: int, hidden_dim: int = 128, out_dim: int = 128, dropout: float = 0.0, rel_dim: int = 2):
         super().__init__()
         self.node_dim = int(node_dim)
-        self.msg = mlp([2 * node_dim + 4, hidden_dim, hidden_dim], dropout=dropout)
+        self.rel_dim = int(rel_dim)
+        if self.rel_dim < 1:
+            raise ValueError("rel_dim must be >= 1")
+        self.msg = mlp([2 * node_dim + self.rel_dim + 1, hidden_dim, hidden_dim], dropout=dropout)
         self.update = mlp([node_dim + hidden_dim, hidden_dim, out_dim], dropout=dropout)
 
     def forward(
@@ -39,7 +42,9 @@ class LocalGraphEncoder(nn.Module):
         h_j = torch.cat([neighbor_x, neighbor_phi], dim=-1)
         k = h_j.shape[1]
         h_i_rep = h_i.unsqueeze(1).expand(-1, k, -1)
-        rel = neighbor_x[..., :3] - x[:, None, :3]
+        if x.shape[-1] < self.rel_dim:
+            raise ValueError(f"Input X has {x.shape[-1]} features but rel_dim={self.rel_dim}")
+        rel = neighbor_x[..., : self.rel_dim] - x[:, None, : self.rel_dim]
         if neighbor_distances is None:
             dist = torch.linalg.norm(rel, dim=-1, keepdim=True)
         else:
