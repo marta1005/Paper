@@ -2,17 +2,17 @@ seed: 42
 output_dir: outputs/fourier_graph
 data:
   data_dir: data
-  val_fraction: 0.2
+  val_fraction: 0.0
   seed: 42
-  max_train_points: 2000000
-  max_val_points: 400000
+  max_train_points:
+  max_val_points:
 features:
   input_columns: [0, 1, 3, 4, 5, 6, 7, 8]
 graph:
-  train_graph_path: processed/graphs/train_knn_graph_xy.npz
+  train_graph_path:
   k_neighbors: 16
   projection: xy
-  build_if_missing: true
+  build_if_missing: false
 shock_score:
   train_path: processed/shock_scores/train_shock_scores.npz
 scaling:
@@ -22,7 +22,7 @@ model:
   name: fourier_graph
   kwargs:
     input_dim: 8
-    fourier_num_frequencies: 6
+    fourier_num_frequencies: 4
     fourier_variables_to_encode: [0, 1, 5, 6, 7]
     fourier_direct_variables: [2, 3, 4]
     graph_hidden_dim: 128
@@ -31,11 +31,12 @@ model:
     hidden_dim: 128
     depth: 3
 training:
-  epochs: 60
-  batch_size: 8192
+  epochs: 30
+  batch_size: 32768
   lr: 0.001
   weight_decay: 0.000001
   num_workers: 4
+  shuffle: false
   log_every_batches: 25
 loss:
   global: 1.0

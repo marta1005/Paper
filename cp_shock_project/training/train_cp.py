@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from cp_shock_project.data.case_indexing import build_case_index, load_case_index
 from cp_shock_project.data.dataset import CpSurfaceDataset, DatasetScalers
 from cp_shock_project.data.load_arrays import load_arrays
+from cp_shock_project.data.samplers import RandomSubsetSampler
 from cp_shock_project.data.splits import point_indices_for_cases, train_val_case_split
 from cp_shock_project.graph.graph_cache import load_graph
 from cp_shock_project.graph.knn_graph import KNNGraphBuilder
@@ -55,7 +56,13 @@ def build_model(config: dict[str, Any]) -> torch.nn.Module:
     if name == "fourier_graph":
         return FourierGraphCpNet(**kwargs)
     if name == "symbolic_weighted_graph":
-        return SymbolicWeightedGraphFourierCpNet(**kwargs)
+        sensor_cfg = config.get("symbolic_sensor", {})
+        sensor_path = sensor_cfg.get("path")
+        if sensor_path and Path(sensor_path).exists():
+            sensor = SymbolicShockSensorModule.from_json(sensor_path)
+        else:
+            sensor = DummyShockSensor(float(sensor_cfg.get("dummy_value", 0.0)))
+        return SymbolicWeightedGraphFourierCpNet(symbolic_sensor=sensor, **kwargs)
     if name == "symbolic_gated_residual":
         sensor_cfg = config.get("symbolic_sensor", {})
         sensor_path = sensor_cfg.get("path")
@@ -209,7 +216,8 @@ def prepare_datasets(config: dict[str, Any], split: str = "train") -> tuple[CpSu
         scalers=scalers,
         input_columns=input_columns,
     )
-    return CpSurfaceDataset(X, Y, indices=train_idx, **common), CpSurfaceDataset(X, Y, indices=val_idx, **common), case_index
+    val_ds = CpSurfaceDataset(X, Y, indices=val_idx, **common) if len(val_idx) > 0 else None
+    return CpSurfaceDataset(X, Y, indices=train_idx, **common), val_ds, case_index
 
 
 def run_epoch(
@@ -275,8 +283,25 @@ def train_from_config(config: dict[str, Any]) -> dict[str, float]:
     train_ds, val_ds, _ = prepare_datasets(config, split="train")
     training_cfg = config.get("training", {})
     batch_size = int(training_cfg.get("batch_size", 256))
+    samples_per_epoch = training_cfg.get("samples_per_epoch")
+    train_sampler = None
+    if samples_per_epoch:
+        train_sampler = RandomSubsetSampler(
+            len(train_ds),
+            num_samples=int(samples_per_epoch),
+            seed=int(config.get("seed", 42)),
+            replacement=bool(training_cfg.get("sample_with_replacement", False)),
+        )
+        print(f"[train] sampling {len(train_sampler)} / {len(train_ds)} train points per epoch", flush=True)
     print(f"[train] creating dataloaders batch_size={batch_size}", flush=True)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=int(training_cfg.get("num_workers", 0)))
+    shuffle_train = bool(training_cfg.get("shuffle", train_sampler is None))
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=shuffle_train if train_sampler is None else False,
+        sampler=train_sampler,
+        num_workers=int(training_cfg.get("num_workers", 0)),
+    )
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=int(training_cfg.get("num_workers", 0))) if val_ds is not None else None
     device = device_auto()
     print(f"[train] using device={device}", flush=True)
@@ -290,6 +315,8 @@ def train_from_config(config: dict[str, Any]) -> dict[str, float]:
     best_val = float("inf")
     best_metrics: dict[str, float] = {}
     for epoch in range(1, epochs + 1):
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)
         print(f"[train] epoch {epoch}/{epochs} start", flush=True)
         train_metrics = run_epoch(model, train_loader, opt, device, lambdas, log_every_batches=log_every_batches)
         train_metrics["epoch"] = epoch

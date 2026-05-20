@@ -74,10 +74,14 @@ class FourierGraphCpNet(_FourierGraphBase):
 class SymbolicWeightedGraphFourierCpNet(FourierGraphCpNet):
     """Same predictor as FourierGraphCpNet; chi is consumed by the loss."""
 
+    def __init__(self, symbolic_sensor: nn.Module | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self.symbolic_sensor = symbolic_sensor or DummyShockSensor(0.0)
+
     def forward(self, X: torch.Tensor, symbolic_chi: torch.Tensor | None = None, **kwargs: torch.Tensor) -> dict[str, torch.Tensor]:
         out = super().forward(X, **kwargs)
-        if symbolic_chi is not None:
-            out["chi"] = symbolic_chi
+        sensor_X = kwargs.get("X_raw", X)
+        out["chi"] = symbolic_chi if symbolic_chi is not None else self.symbolic_sensor(sensor_X).clamp(0.0, 1.0)
         return out
 
 

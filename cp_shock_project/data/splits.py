@@ -9,10 +9,12 @@ def train_val_case_split(
     index: CaseIndex, val_fraction: float = 0.2, seed: int = 42
 ) -> tuple[np.ndarray, np.ndarray]:
     """Split complete CFD cases, never individual points."""
+    if val_fraction <= 0.0 or index.n_cases <= 1:
+        return np.arange(index.n_cases), np.array([], dtype=np.int64)
     rng = np.random.default_rng(seed)
     case_ids = np.arange(index.n_cases)
     rng.shuffle(case_ids)
-    n_val = max(1, int(round(index.n_cases * val_fraction))) if index.n_cases > 1 else 0
+    n_val = max(1, int(round(index.n_cases * val_fraction)))
     val_cases = np.sort(case_ids[:n_val])
     train_cases = np.sort(case_ids[n_val:])
     return train_cases, val_cases

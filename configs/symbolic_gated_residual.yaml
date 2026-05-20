@@ -2,17 +2,17 @@ seed: 42
 output_dir: outputs/symbolic_gated_residual
 data:
   data_dir: data
-  val_fraction: 0.2
+  val_fraction: 0.0
   seed: 42
-  max_train_points: 2000000
-  max_val_points: 400000
+  max_train_points:
+  max_val_points:
 features:
   input_columns: [0, 1, 3, 4, 5, 6, 7, 8]
 graph:
-  train_graph_path: processed/graphs/train_knn_graph_xy.npz
+  train_graph_path:
   k_neighbors: 16
   projection: xy
-  build_if_missing: true
+  build_if_missing: false
 shock_score:
   train_path: processed/shock_scores/train_shock_scores.npz
 symbolic_sensor:
@@ -25,7 +25,7 @@ model:
   name: symbolic_gated_residual
   kwargs:
     input_dim: 8
-    fourier_num_frequencies: 6
+    fourier_num_frequencies: 4
     fourier_variables_to_encode: [0, 1, 5, 6, 7]
     fourier_direct_variables: [2, 3, 4]
     graph_hidden_dim: 128
@@ -34,16 +34,17 @@ model:
     hidden_dim: 128
     depth: 3
 training:
-  epochs: 60
-  batch_size: 4096
+  epochs: 30
+  batch_size: 16384
   lr: 0.001
   weight_decay: 0.000001
   num_workers: 4
+  shuffle: false
   log_every_batches: 25
 loss:
   global: 1.0
   mae: 0.0
   weighted: 1.0
   sensor_weight: 5.0
-  shock: 1.0
+  shock: 0.0
   residual: 0.01
