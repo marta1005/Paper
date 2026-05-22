@@ -127,6 +127,17 @@ Por defecto este comando usa `gplearn`. Para instalarlo en la venv:
 python -m pip install gplearn
 ```
 
+El paso del sensor simbólico guarda diagnósticos para evitar soluciones triviales:
+
+- `processed/symbolic_sensor/oracle_shock_score_stats.json`
+- `processed/symbolic_sensor/threshold_diagnostics.csv`
+- `processed/symbolic_sensor/oracle_shock_score_histogram.png`
+- `outputs/symbolic_sensor/sensor_metrics.json`
+- `outputs/symbolic_sensor/degeneracy_report.json`
+- `outputs/symbolic_sensor/validation_predictions.csv`
+
+Si gplearn devuelve una fórmula casi constante, por ejemplo equivalente a cero, el entrenamiento se rechaza cuando `reject_degenerate: true`.
+
 7. Entrenar baseline MLP:
 
 ```bash
