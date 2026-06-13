@@ -14,73 +14,88 @@ logger = logging.getLogger(__name__)
 
 class ModelEvaluator:
     """Evalúa rendimiento del modelo"""
-    
-    def __init__(self, model, device='cpu'):
+
+    def __init__(self, model, device='cpu', is_autoencoder=False):
+        """
+        Args:
+            model: modelo a evaluar
+            device: dispositivo
+            is_autoencoder: si True, evalúa reconstrucción X→X̂ (comparar contra X_batch).
+                            si False, evalúa predicción aerodinámica (comparar contra Y_batch).
+        """
         self.model = model
         self.device = device
-    
+        self.is_autoencoder = is_autoencoder
+
     @torch.no_grad()
     def evaluate(self, test_loader, return_predictions=False):
         """
-        Evalúa el modelo en dataset de test
-        
+        Evalúa el modelo en dataset de test.
+
         Returns:
-            metrics: dict con métricas
-            predictions: (si return_predictions=True) predicciones
+            dict con 'metrics' y, opcionalmente, 'y_true', 'y_pred', 'z'.
         """
         self.model.eval()
-        
+
         y_true_list = []
         y_pred_list = []
         z_list = []
-        
+
         for X_batch, Y_batch in test_loader:
             X_batch = X_batch.to(self.device)
-            
-            if hasattr(self.model, 'encoder'):  # Es un sensor
-                z = self.model.encoder(X_batch)
-                z_list.append(z.cpu().numpy())
-            
+
             # Predicción
-            if isinstance(self.model, nn.Sequential):
-                y_pred = self.model(X_batch)
+            output = self.model(X_batch)
+
+            if isinstance(output, tuple):
+                # AE devuelve (x_recon, z)
+                y_pred = output[0]
+                z_list.append(output[1].cpu().numpy())
+            elif isinstance(output, dict):
+                y_pred = output.get('shock_prob', output.get('latent'))
+                if 'latent' in output:
+                    z_list.append(output['latent'].cpu().numpy())
             else:
-                output = self.model(X_batch)
-                if isinstance(output, dict):
-                    y_pred = output.get('shock_prob', output.get('latent'))
-                else:
-                    y_pred = output[0] if isinstance(output, tuple) else output
-            
-            y_true_list.append(Y_batch.cpu().numpy())
+                y_pred = output
+
+            # Target: X para reconstrucción, Y para predicción aerodinámica
+            if self.is_autoencoder:
+                y_true_list.append(X_batch.cpu().numpy())
+            else:
+                y_true_list.append(Y_batch.cpu().numpy())
+
             y_pred_list.append(y_pred.cpu().numpy())
-        
+
         y_true = np.concatenate(y_true_list, axis=0)
         y_pred = np.concatenate(y_pred_list, axis=0)
-        
-        # Métricas
+
+        # Asegurar mismas dimensiones (recortar si difieren)
+        min_cols = min(y_true.shape[1], y_pred.shape[1])
+        y_true = y_true[:, :min_cols]
+        y_pred = y_pred[:, :min_cols]
+
         metrics = {
-            'mse': mean_squared_error(y_true, y_pred),
-            'rmse': np.sqrt(mean_squared_error(y_true, y_pred)),
-            'mae': mean_absolute_error(y_true, y_pred),
+            'mse': float(mean_squared_error(y_true, y_pred)),
+            'rmse': float(np.sqrt(mean_squared_error(y_true, y_pred))),
+            'mae': float(mean_absolute_error(y_true, y_pred)),
         }
-        
+
         # R² por canal
-        for i in range(y_true.shape[1]):
-            if i < len(self.model.model.output_features if hasattr(self.model, 'model') else ['Cp', 'Cfx', 'Cfy', 'Cfz']):
-                feat_name = ['Cp', 'Cfx', 'Cfy', 'Cfz'][i]
-                r2 = r2_score(y_true[:, i], y_pred[:, i])
-                metrics[f'r2_{feat_name}'] = r2
-        
+        output_names = ['Cp', 'Cfx', 'Cfy', 'Cfz'] if not self.is_autoencoder else None
+        for i in range(min_cols):
+            name = output_names[i] if (output_names and i < len(output_names)) else f'feat_{i}'
+            metrics[f'r2_{name}'] = float(r2_score(y_true[:, i], y_pred[:, i]))
+
         result = {'metrics': metrics}
-        
+
         if return_predictions:
             result['y_true'] = y_true
             result['y_pred'] = y_pred
             if z_list:
                 result['z'] = np.concatenate(z_list, axis=0)
-        
+
         return result
-    
+
     def log_metrics(self, metrics):
         logger.info("=" * 60)
         logger.info("EVALUATION METRICS")
@@ -89,6 +104,7 @@ class ModelEvaluator:
             if isinstance(value, float):
                 logger.info(f"{key:20s}: {value:.6f}")
         logger.info("=" * 60)
+
 
 
 class VisualizationTools:

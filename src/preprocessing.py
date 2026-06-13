@@ -83,7 +83,8 @@ class CFDPreprocessor:
         derived.append(grad_cf.reshape(-1, 1))
         
         # Factor de compresibilidad Laitone
-        L_factor = (1 - Mach**2) ** 0.5 / (1 + 0.5 * (self.gamma - 1) * Mach**2)
+        # Clamp a 0 para Mach > 1 (fórmula no aplica en régimen supersónico)
+        L_factor = np.maximum(1 - Mach**2, 0.0) ** 0.5 / (1 + 0.5 * (self.gamma - 1) * Mach**2)
         derived.append(L_factor.reshape(-1, 1))
         
         # Concatenar con X original

@@ -265,11 +265,11 @@ class VirtualShockSensor(nn.Module):
         
         # MoE (opcional, requiere indicadores físicos)
         if compute_moe:
-            # Aproximación: usar componentes de x como indicadores
-            # x[2] = Pi, x[3:6] = coordenadas
-            shock_indicator = x[:, 9:10]  # Derived: shock_indicator
-            separation_risk = x[:, 10:11]  # Derived: separation_risk (aprox)
-            mach_local = x[:, 8:9]  # Derived: M_local
+            # Índices según preprocessing.py (X_derived columnas 9-18)
+            # 9=M_local, 10=grad_p, 11=cp_loss, 12=shock_indicator, 13=Cf_mag
+            shock_indicator = x[:, 12:13]   # shock_indicator
+            separation_risk = x[:, 13:14]   # Cf_mag: proxy de riesgo de separación
+            mach_local      = x[:, 9:10]    # M_local
             
             moe_output, gate_weights = self.moe(
                 z, shock_indicator, separation_risk, mach_local

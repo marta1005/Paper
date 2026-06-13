@@ -69,12 +69,16 @@ class CFDDataset(Dataset):
     def __getitem__(self, idx):
         X = self.X[idx].astype(np.float32)
         Y = self.Y[idx].astype(np.float32)
-        
+
+        # Reemplazar NaN/Inf por 0 (protección ante datos precomputados con bugs)
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        Y = np.nan_to_num(Y, nan=0.0, posinf=0.0, neginf=0.0)
+
         # Normalizar si aplica
         if self.normalize and self.scaler:
             X = (X - self.scaler['X_mean']) / self.scaler['X_std']
             Y = (Y - self.scaler['Y_mean']) / self.scaler['Y_std']
-        
+
         return torch.from_numpy(X), torch.from_numpy(Y)
 
 
@@ -135,7 +139,7 @@ def load_data_with_sampling(sample_fraction=1.0):
     Y_test_full = np.asarray(Y_test_full, dtype=np.float32)
     
     # Train/Val split
-    n_val = int(len(X_train) * TRAINING_CONFIG.get('val_split', 0.1))
+    n_val = int(len(X_train) * DATA_CONFIG.get('val_split', 0.1))
     X_val = X_train[-n_val:]
     Y_val = Y_train[-n_val:]
     X_train = X_train[:-n_val]
@@ -195,29 +199,34 @@ def get_dataloaders(sample_fraction=None):
         scaler=scaler
     )
     
+    num_workers = TRAINING_CONFIG.get('num_workers', 0)
+
     # DataLoaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=TRAINING_CONFIG['batch_size'],
         shuffle=True,
-        num_workers=0,
-        pin_memory=True
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=(num_workers > 0),
     )
-    
+
     val_loader = DataLoader(
         val_dataset,
         batch_size=TRAINING_CONFIG['batch_size'],
         shuffle=False,
-        num_workers=0,
-        pin_memory=True
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=(num_workers > 0),
     )
-    
+
     test_loader = DataLoader(
         test_dataset,
         batch_size=TRAINING_CONFIG['batch_size'],
         shuffle=False,
-        num_workers=0,
-        pin_memory=True
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=(num_workers > 0),
     )
     
     return train_loader, val_loader, test_loader, scaler

@@ -7,7 +7,7 @@ import torch.optim as optim
 import logging
 import numpy as np
 from pathlib import Path
-from config import TRAINING_CONFIG, MODEL_DIR
+from config import TRAINING_CONFIG, MODEL_DIR, MODEL_CONFIG, DERIVED_FEATURE_INDICES
 from src.models import (
     ShockAutoencoder, MixtureOfExperts, VirtualShockSensor, ReconstructionLoss
 )
@@ -133,182 +133,289 @@ class AETrainer:
 
 class MOETrainer:
     """Entrena el Mixture of Experts"""
-    
+
     def __init__(self, encoder, device='cpu'):
         self.device = device
         self.encoder = encoder
         self.encoder.eval()  # Congelar encoder
-        
+
         self.model = MixtureOfExperts(
-            latent_dim=32,  # Salida del encoder
+            latent_dim=32,
             num_experts=MODEL_CONFIG['moe']['num_experts'],
             expert_output_dim=MODEL_CONFIG['moe']['expert_output_dim'],
         ).to(device)
-        
+
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=TRAINING_CONFIG['learning_rate'] * 0.5,
             weight_decay=TRAINING_CONFIG['weight_decay']
         )
-        
+
         self.criterion = nn.MSELoss()
         self.loss_history = {'train': [], 'val': []}
+        self.best_val_loss = float('inf')
         self.patience_counter = 0
-    
+
+        # Índices de features derivados (columnas en X_derived)
+        self._idx_mach    = DERIVED_FEATURE_INDICES['M_local']          # 9
+        self._idx_shock   = DERIVED_FEATURE_INDICES['shock_indicator']   # 12
+        self._idx_sep     = DERIVED_FEATURE_INDICES['Cf_mag']           # 13
+
+    def _get_physical_indicators(self, X_batch):
+        shock_indicator = X_batch[:, self._idx_shock:self._idx_shock + 1]
+        separation_risk = X_batch[:, self._idx_sep:self._idx_sep + 1]
+        mach_local      = X_batch[:, self._idx_mach:self._idx_mach + 1]
+        return shock_indicator, separation_risk, mach_local
+
     def train_epoch(self, train_loader):
         self.model.train()
         total_loss = 0
-        
+
         for X_batch, Y_batch in train_loader:
             X_batch = X_batch.to(self.device)
             Y_batch = Y_batch.to(self.device)
-            
+
             with torch.no_grad():
                 z = self.encoder(X_batch)
-            
-            # Indicadores físicos (derivados de X)
-            shock_indicator = X_batch[:, 9:10]  # Derived feature
-            separation_risk = X_batch[:, 10:11]
-            mach_local = X_batch[:, 8:9]
-            
-            # Forward MoE
+
+            shock_indicator, separation_risk, mach_local = self._get_physical_indicators(X_batch)
+
             moe_output, gate_weights = self.model(
                 z, shock_indicator, separation_risk, mach_local
             )
-            
-            # Loss: predecir Y (aerodinámica)
+
             loss = self.criterion(moe_output, Y_batch[:, :moe_output.shape[1]])
-            
+
             self.optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
-            
+
             total_loss += loss.item()
-        
+
         avg_loss = total_loss / len(train_loader)
         self.loss_history['train'].append(avg_loss)
         return avg_loss
-    
+
     @torch.no_grad()
     def validate(self, val_loader):
         self.model.eval()
         total_loss = 0
-        
+
         for X_batch, Y_batch in val_loader:
             X_batch = X_batch.to(self.device)
             Y_batch = Y_batch.to(self.device)
-            
+
             z = self.encoder(X_batch)
-            
-            shock_indicator = X_batch[:, 9:10]
-            separation_risk = X_batch[:, 10:11]
-            mach_local = X_batch[:, 8:9]
-            
+
+            shock_indicator, separation_risk, mach_local = self._get_physical_indicators(X_batch)
+
             moe_output, _ = self.model(z, shock_indicator, separation_risk, mach_local)
             loss = self.criterion(moe_output, Y_batch[:, :moe_output.shape[1]])
-            
+
             total_loss += loss.item()
-        
+
         avg_loss = total_loss / len(val_loader)
         self.loss_history['val'].append(avg_loss)
-        
+
+        # Early stopping + checkpointing
+        if avg_loss < self.best_val_loss - TRAINING_CONFIG['early_stopping_delta']:
+            self.best_val_loss = avg_loss
+            self.patience_counter = 0
+            self.save_model()
+        else:
+            self.patience_counter += 1
+
         return avg_loss
-    
+
     def train(self, train_loader, val_loader, num_epochs=None):
         if num_epochs is None:
-            num_epochs = TRAINING_CONFIG['num_epochs'] // 2  # Menos épocas para MoE
-        
+            num_epochs = TRAINING_CONFIG['num_epochs'] // 2
+
         logger.info(f"Starting MoE training for {num_epochs} epochs")
-        
+
         for epoch in range(num_epochs):
             train_loss = self.train_epoch(train_loader)
-            
+
             if (epoch + 1) % TRAINING_CONFIG['validate_every'] == 0:
                 val_loss = self.validate(val_loader)
                 logger.info(
                     f"Epoch {epoch+1}/{num_epochs} | "
                     f"Train Loss: {train_loss:.6f} | "
-                    f"Val Loss: {val_loss:.6f}"
+                    f"Val Loss: {val_loss:.6f} | "
+                    f"Patience: {self.patience_counter}"
                 )
+
+                if self.patience_counter >= TRAINING_CONFIG['early_stopping_patience']:
+                    logger.info(f"Early stopping MoE at epoch {epoch+1}")
+                    break
+
+        logger.info("MoE training completed")
+        self.load_model()  # Restaurar mejor modelo
+        return self.model
+
+    def save_model(self, name='moe_best.pt'):
+        path = MODEL_DIR / name
+        torch.save(self.model.state_dict(), path)
+        logger.info(f"Saved MoE to {path}")
+
+    def load_model(self, name='moe_best.pt'):
+        path = MODEL_DIR / name
+        if path.exists():
+            self.model.load_state_dict(torch.load(path, map_location=self.device))
+            logger.info(f"Loaded MoE from {path}")
 
 
 class SensorTrainer:
-    """Entrena el sensor virtual (heads especializados)"""
-    
+    """
+    Entrena el Virtual Shock Sensor (heads de clasificación/regresión).
+    Usa pseudo-labels derivados del shock_indicator de cada batch.
+    Encoder y MoE permanecen congelados.
+    """
+
+    # Umbral para binarizar shock_indicator → etiqueta de choque
+    SHOCK_THRESHOLD = 0.5
+
     def __init__(self, encoder, moe, device='cpu'):
         self.device = device
         self.encoder = encoder
         self.moe = moe
-        
+
         self.sensor = VirtualShockSensor(encoder, moe, latent_dim=32).to(device)
-        
-        # Congelar encoder y MoE
+
         for param in self.encoder.parameters():
             param.requires_grad = False
         for param in self.moe.parameters():
             param.requires_grad = False
-        
+
         self.optimizer = optim.Adam(
-            [
-                {'params': self.sensor.shock_head.parameters()},
-                {'params': self.sensor.intensity_head.parameters()},
-                {'params': self.sensor.separation_head.parameters()},
-            ],
+            list(self.sensor.shock_head.parameters()) +
+            list(self.sensor.intensity_head.parameters()) +
+            list(self.sensor.separation_head.parameters()),
             lr=TRAINING_CONFIG['learning_rate'],
             weight_decay=TRAINING_CONFIG['weight_decay']
         )
-        
-        self.criterion_shock = nn.BCELoss()  # Clasificación
-        self.criterion_intensity = nn.MSELoss()  # Regresión
+
+        self.criterion_shock = nn.BCELoss()
+        self.criterion_intensity = nn.MSELoss()
         self.loss_history = {'train': [], 'val': []}
-    
-    def train_epoch(self, train_loader, pseudo_labels):
+        self.best_val_loss = float('inf')
+        self.patience_counter = 0
+
+        self._idx_shock = DERIVED_FEATURE_INDICES['shock_indicator']  # 12
+        self._idx_cf    = DERIVED_FEATURE_INDICES['Cf_mag']           # 13
+
+    def _make_pseudo_labels(self, X_batch):
         """
-        Args:
-            pseudo_labels: dict con 'shock', 'intensity', 'separation'
+        Genera pseudo-labels a partir del shock_indicator normalizado.
+        - shock_label: binario (shock_indicator > umbral normalizado)
+        - intensity: valor continuo de shock_indicator (no negativo)
         """
+        shock_raw = X_batch[:, self._idx_shock:self._idx_shock + 1]
+
+        # Normalizar dentro del batch para comparación robusta
+        s_mean = shock_raw.mean()
+        s_std  = shock_raw.std() + 1e-8
+        shock_norm = (shock_raw - s_mean) / s_std
+
+        shock_label = (shock_norm > self.SHOCK_THRESHOLD).float()
+        intensity   = torch.relu(shock_norm)  # intensidad ≥ 0
+
+        return shock_label, intensity
+
+    def train_epoch(self, train_loader):
         self.sensor.train()
         total_loss = 0
-        
-        for batch_idx, (X_batch, Y_batch) in enumerate(train_loader):
+
+        for X_batch, _ in train_loader:
             X_batch = X_batch.to(self.device)
-            
-            # Obtener pseudo-labels para este batch
-            batch_shock = pseudo_labels['shock'][batch_idx * len(X_batch):(batch_idx + 1) * len(X_batch)]
-            batch_shock = torch.tensor(batch_shock, dtype=torch.float32).to(self.device)
-            
-            # Forward
+
+            shock_label, intensity = self._make_pseudo_labels(X_batch)
+
             output = self.sensor(X_batch, compute_moe=False)
-            
-            # Loss
-            loss_shock = self.criterion_shock(output['shock_prob'], batch_shock.unsqueeze(1))
-            loss_total = loss_shock * TRAINING_CONFIG.get('loss_shock_weight', 1.0)
-            
+
+            loss_shock     = self.criterion_shock(output['shock_prob'], shock_label)
+            loss_intensity = self.criterion_intensity(output['intensity'], intensity)
+            loss_total = (
+                TRAINING_CONFIG.get('loss_shock_weight', 1.0) * loss_shock +
+                0.5 * loss_intensity
+            )
+
             self.optimizer.zero_grad()
             loss_total.backward()
             torch.nn.utils.clip_grad_norm_(self.sensor.parameters(), max_norm=1.0)
             self.optimizer.step()
-            
+
             total_loss += loss_total.item()
-        
+
         avg_loss = total_loss / len(train_loader)
         self.loss_history['train'].append(avg_loss)
         return avg_loss
 
+    @torch.no_grad()
+    def validate(self, val_loader):
+        self.sensor.eval()
+        total_loss = 0
 
-# Config for compatibility
-MODEL_CONFIG = {
-    'autoencoder': {
-        'latent_dim': 32,
-        'batch_norm': True,
-        'dropout': 0.1,
-    },
-    'moe': {
-        'expert_output_dim': 16,
-        'num_experts': 4,
-    },
-}
+        for X_batch, _ in val_loader:
+            X_batch = X_batch.to(self.device)
+
+            shock_label, intensity = self._make_pseudo_labels(X_batch)
+
+            output = self.sensor(X_batch, compute_moe=False)
+
+            loss_shock     = self.criterion_shock(output['shock_prob'], shock_label)
+            loss_intensity = self.criterion_intensity(output['intensity'], intensity)
+            total_loss += (loss_shock + 0.5 * loss_intensity).item()
+
+        avg_loss = total_loss / len(val_loader)
+        self.loss_history['val'].append(avg_loss)
+
+        if avg_loss < self.best_val_loss - TRAINING_CONFIG['early_stopping_delta']:
+            self.best_val_loss = avg_loss
+            self.patience_counter = 0
+            self.save_model()
+        else:
+            self.patience_counter += 1
+
+        return avg_loss
+
+    def train(self, train_loader, val_loader, num_epochs=None):
+        if num_epochs is None:
+            num_epochs = TRAINING_CONFIG['num_epochs']
+
+        logger.info(f"Starting Sensor training for {num_epochs} epochs")
+
+        for epoch in range(num_epochs):
+            train_loss = self.train_epoch(train_loader)
+
+            if (epoch + 1) % TRAINING_CONFIG['validate_every'] == 0:
+                val_loss = self.validate(val_loader)
+                logger.info(
+                    f"Epoch {epoch+1}/{num_epochs} | "
+                    f"Train Loss: {train_loss:.6f} | "
+                    f"Val Loss: {val_loss:.6f} | "
+                    f"Patience: {self.patience_counter}"
+                )
+
+                if self.patience_counter >= TRAINING_CONFIG['early_stopping_patience']:
+                    logger.info(f"Early stopping Sensor at epoch {epoch+1}")
+                    break
+
+        logger.info("Sensor training completed")
+        self.load_model()
+        return self.sensor
+
+    def save_model(self, name='sensor_best.pt'):
+        path = MODEL_DIR / name
+        torch.save(self.sensor.state_dict(), path)
+        logger.info(f"Saved Sensor to {path}")
+
+    def load_model(self, name='sensor_best.pt'):
+        path = MODEL_DIR / name
+        if path.exists():
+            self.sensor.load_state_dict(torch.load(path, map_location=self.device))
+            logger.info(f"Loaded Sensor from {path}")
 
 
 if __name__ == '__main__':
