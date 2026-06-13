@@ -69,12 +69,16 @@ class CFDDataset(Dataset):
     def __getitem__(self, idx):
         X = self.X[idx].astype(np.float32)
         Y = self.Y[idx].astype(np.float32)
-        
+
+        # Reemplazar NaN/Inf por 0 (protección ante datos precomputados con bugs)
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        Y = np.nan_to_num(Y, nan=0.0, posinf=0.0, neginf=0.0)
+
         # Normalizar si aplica
         if self.normalize and self.scaler:
             X = (X - self.scaler['X_mean']) / self.scaler['X_std']
             Y = (Y - self.scaler['Y_mean']) / self.scaler['Y_std']
-        
+
         return torch.from_numpy(X), torch.from_numpy(Y)
 
 
