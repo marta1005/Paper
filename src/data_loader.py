@@ -135,7 +135,7 @@ def load_data_with_sampling(sample_fraction=1.0):
     Y_test_full = np.asarray(Y_test_full, dtype=np.float32)
     
     # Train/Val split
-    n_val = int(len(X_train) * TRAINING_CONFIG.get('val_split', 0.1))
+    n_val = int(len(X_train) * DATA_CONFIG.get('val_split', 0.1))
     X_val = X_train[-n_val:]
     Y_val = Y_train[-n_val:]
     X_train = X_train[:-n_val]
@@ -195,29 +195,34 @@ def get_dataloaders(sample_fraction=None):
         scaler=scaler
     )
     
+    num_workers = TRAINING_CONFIG.get('num_workers', 0)
+
     # DataLoaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=TRAINING_CONFIG['batch_size'],
         shuffle=True,
-        num_workers=0,
-        pin_memory=True
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=(num_workers > 0),
     )
-    
+
     val_loader = DataLoader(
         val_dataset,
         batch_size=TRAINING_CONFIG['batch_size'],
         shuffle=False,
-        num_workers=0,
-        pin_memory=True
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=(num_workers > 0),
     )
-    
+
     test_loader = DataLoader(
         test_dataset,
         batch_size=TRAINING_CONFIG['batch_size'],
         shuffle=False,
-        num_workers=0,
-        pin_memory=True
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=(num_workers > 0),
     )
     
     return train_loader, val_loader, test_loader, scaler

@@ -31,9 +31,10 @@ DATA_CONFIG = {
     'output_dim': 4,
     
     # Sampling estratégico (81M puntos es demasiado, subsampleamos)
-    'train_sample_fraction': 0.05,  # Usar 5% (~4M puntos) para demo rápida. Aumentar a 0.2-0.5 para producción
+    # Sobrescribible con env var PAPER_TRAIN_FRACTION (ej: 0.50 para producción)
+    'train_sample_fraction': float(os.environ.get('PAPER_TRAIN_FRACTION', 0.05)),
     'val_split': 0.1,
-    'test_sample_fraction': 0.1,  # Usar 10% de test para demo rápida. Usar 1.0 para evaluación completa
+    'test_sample_fraction': float(os.environ.get('PAPER_TEST_FRACTION', 0.1)),
 }
 
 # ============ MODEL CONFIG ============
@@ -60,11 +61,11 @@ MODEL_CONFIG = {
 
 # ============ TRAINING CONFIG ============
 TRAINING_CONFIG = {
-    'num_epochs': 20,  # Demo rápida. Aumentar a 50-100 para producción
-    'batch_size': 256,  # Reducido para demo
+    'num_epochs': int(os.environ.get('PAPER_EPOCHS', 20)),   # Demo rápida. 50-100 para producción
+    'batch_size': int(os.environ.get('PAPER_BATCH_SIZE', 256)),
     'learning_rate': 1e-3,
     'weight_decay': 1e-5,
-    'early_stopping_patience': 5,  # Demo rápida
+    'early_stopping_patience': 5,
     'early_stopping_delta': 1e-4,
     
     # Scheduler
@@ -79,6 +80,13 @@ TRAINING_CONFIG = {
     # Validation
     'validate_every': 5,
     'save_every': 5,
+
+    # DataLoader workers (0 = sin multiprocessing; aumentar a 4-8 en GPU linux)
+    # Sobrescribible con env var PAPER_NUM_WORKERS
+    'num_workers': int(os.environ.get('PAPER_NUM_WORKERS', 0)),
+
+    # LR Scheduler
+    'lr_min': 1e-6,  # Mínimo para CosineAnnealingLR
 }
 
 # ============ PREPROCESSING CONFIG ============
@@ -96,6 +104,22 @@ PREPROCESSING_CONFIG = {
     # Physics parameters
     'gamma': 1.4,
     'pressure_gradient_window': 5,  # puntos vecinos para calcular gradiente
+}
+
+# ============ DERIVED FEATURE INDICES ============
+# Orden exacto de columnas en X_derived (X_original [0-8] + derived [9-18])
+# X_original: [Mach(0), AoA(1), Pi(2), x(3), y(4), z(5), nx(6), ny(7), nz(8)]
+DERIVED_FEATURE_INDICES = {
+    'M_local':          9,   # Mach local isentrópico
+    'grad_p':          10,   # Gradiente de presión suavizado
+    'cp_loss':         11,   # Pérdida de presión de remanso
+    'shock_indicator': 12,   # Indicador combinado de choque
+    'Cf_mag':          13,   # Magnitud de fricción (proxy separación)
+    'q_dyn':           14,   # Número de presión dinámica
+    'Pi_norm':         15,   # Presión normalizada por Mach
+    'AoA_norm':        16,   # AoA normalizado por Mach
+    'grad_cf':         17,   # Gradiente de fricción
+    'L_factor':        18,   # Factor de compresibilidad de Laitone
 }
 
 # ============ DEVICE ============

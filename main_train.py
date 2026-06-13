@@ -39,6 +39,11 @@ logger = logging.getLogger(__name__)
 torch.manual_seed(SEED)
 np.random.seed(SEED)
 
+# GPU optimizations
+if torch.cuda.is_available():
+    torch.backends.cudnn.benchmark = True          # Autotuning de kernels
+    torch.set_float32_matmul_precision('high')     # TF32 en Ampere+
+
 
 def main():
     """
@@ -120,19 +125,36 @@ def main():
         traceback.print_exc()
         return False
     
-    # ============ STAGE 5: EVALUATION ============
-    logger.info("\n[STAGE 5] Evaluation...")
-    
+    # ============ STAGE 5: SENSOR TRAINING ============
+    logger.info("\n[STAGE 5] Training Virtual Shock Sensor...")
+    logger.info("  Heads: shock_head (BCE) + intensity_head (MSE)")
+    logger.info("  Encoder + MoE frozen; only heads trained")
+
     try:
-        evaluator = ModelEvaluator(ae_model, device=device)
-        eval_result = evaluator.evaluate(test_loader, return_predictions=True)
-        
-        metrics = eval_result['metrics']
-        evaluator.log_metrics(metrics)
-        
-        # Guardar reporte
-        save_evaluation_report(metrics, eval_result, model_name='autoencoder')
-        
+        sensor_trainer = SensorTrainer(
+            encoder=ae_model.encoder,
+            moe=moe_model,
+            device=device
+        )
+        sensor_model = sensor_trainer.train(train_loader, val_loader)
+        logger.info("✓ Sensor training completed")
+        logger.info(f"  Best validation loss: {sensor_trainer.best_val_loss:.6f}")
+    except Exception as e:
+        logger.error(f"Failed to train Sensor: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+    # ============ STAGE 6: EVALUATION ============
+    logger.info("\n[STAGE 6] Evaluation...")
+
+    try:
+        # Evaluación de reconstrucción del AE (X→X̂)
+        ae_evaluator = ModelEvaluator(ae_model, device=device, is_autoencoder=True)
+        ae_eval = ae_evaluator.evaluate(test_loader, return_predictions=True)
+        ae_evaluator.log_metrics(ae_eval['metrics'])
+        save_evaluation_report(ae_eval['metrics'], ae_eval, model_name='autoencoder')
+
         logger.info("✓ Evaluation completed")
     except Exception as e:
         logger.error(f"Failed evaluation: {e}")
@@ -140,42 +162,42 @@ def main():
         traceback.print_exc()
         return False
     
-    # ============ STAGE 6: VISUALIZATION ============
-    logger.info("\n[STAGE 6] Generating visualizations...")
-    
+    # ============ STAGE 7: VISUALIZATION ============
+    logger.info("\n[STAGE 7] Generating visualizations...")
+
     try:
         viz = VisualizationTools()
-        
-        # Loss curves
+        eval_result = ae_eval  # alias
+
+        # Loss curves AE
         viz.plot_losses(
             ae_trainer.loss_history['train'],
             ae_trainer.loss_history['val'],
             save_path=OUTPUT_DIR / 'plots' / 'ae_losses.png'
         )
-        
-        # Predictions vs truth
-        if 'y_true' in eval_result and 'y_pred' in eval_result:
-            viz.plot_predictions_vs_truth(
-                eval_result['y_true'][:10000],  # Subsample para visualizar
-                eval_result['y_pred'][:10000],
-                save_path=OUTPUT_DIR / 'plots' / 'predictions_vs_truth.png'
-            )
-        
-        # Latent space
-        if 'z' in eval_result:
-            viz.plot_latent_space(
-                eval_result['z'][:10000],
-                save_path=OUTPUT_DIR / 'plots' / 'latent_space.png'
-            )
-        
-        # Reconstruction error
+
+        # Loss curves MoE
+        viz.plot_losses(
+            moe_trainer.loss_history['train'],
+            moe_trainer.loss_history['val'],
+            save_path=OUTPUT_DIR / 'plots' / 'moe_losses.png'
+        )
+
+        # Reconstruction error distribution
         if 'y_true' in eval_result and 'y_pred' in eval_result:
             viz.plot_reconstruction_error(
                 eval_result['y_true'],
                 eval_result['y_pred'],
                 save_path=OUTPUT_DIR / 'plots' / 'reconstruction_error.png'
             )
-        
+
+        # Latent space
+        if 'z' in eval_result:
+            viz.plot_latent_space(
+                eval_result['z'][:10000],
+                save_path=OUTPUT_DIR / 'plots' / 'latent_space.png'
+            )
+
         logger.info("✓ Visualizations saved")
     except Exception as e:
         logger.warning(f"Visualization failed (non-critical): {e}")
