@@ -1,1 +1,0 @@
-"""Synthetic test helpers package."""

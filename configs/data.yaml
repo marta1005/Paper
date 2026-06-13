@@ -1,7 +1,0 @@
-data_dir: data
-case_index_dir: processed/case_indices
-val_fraction: 0.2
-seed: 42
-max_train_points:
-max_val_points:
-max_eval_points:

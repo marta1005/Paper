@@ -1,12 +1,8 @@
-numpy
-pandas
-pyarrow
-scipy
-scikit-learn
-torch
-matplotlib
-PyYAML
-pytest
-gplearn
-# Optional for symbolic sensor training:
-pysr
+torch>=2.0.0
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+matplotlib>=3.7.0
+scipy>=1.11.0
+tqdm>=4.66.0
+tensorboard>=2.14.0
