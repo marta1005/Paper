@@ -120,23 +120,27 @@ class GatingNetwork(nn.Module):
 
 class MixtureOfExperts(nn.Module):
     """
-    Mixture of Experts para múltiples regímenes físicos
+    Mixture of Experts para múltiples regímenes físicos.
+    Los expertos producen features intermedias (expert_output_dim);
+    output_head las proyecta a coeficientes aerodinámicos (output_dim=4).
     """
-    
-    def __init__(self, latent_dim=32, num_experts=4, expert_output_dim=16):
+
+    def __init__(self, latent_dim=32, num_experts=4, expert_output_dim=16, output_dim=4):
         super().__init__()
-        
+
+        self.latent_dim = latent_dim
         self.num_experts = num_experts
-        
-        # Expertos (uno para cada régimen)
+        self.expert_output_dim = expert_output_dim
+        self.output_dim = output_dim
+
         self.experts = nn.ModuleList([
             ExpertNetwork(latent_dim, expert_output_dim)
             for _ in range(num_experts)
         ])
-        
-        # Gating network
+
         self.gating = GatingNetwork(latent_dim, num_experts, num_physical_features=3)
-    
+        self.output_head = nn.Linear(expert_output_dim, output_dim)
+
     def forward(self, z, shock_indicator, separation_risk, mach_local):
         """
         Args:
@@ -144,25 +148,23 @@ class MixtureOfExperts(nn.Module):
             shock_indicator: [batch, 1]
             separation_risk: [batch, 1]
             mach_local: [batch, 1]
-        
+
         Returns:
-            output: [batch, expert_output_dim]
+            output: [batch, output_dim]  — Cp, Cfx, Cfy, Cfz
             gate_weights: [batch, num_experts]
         """
-        # Gating
         physical_features = torch.cat([
             shock_indicator, separation_risk, mach_local
         ], dim=1)
-        
-        gate_weights = self.gating(z, physical_features)  # [batch, num_experts]
-        
-        # Forward en expertos
+
+        gate_weights = self.gating(z, physical_features)
+
         expert_outputs = [expert(z) for expert in self.experts]
-        expert_stack = torch.stack(expert_outputs, dim=1)  # [batch, num_experts, expert_output_dim]
-        
-        # Mezcla ponderada
-        output = (gate_weights.unsqueeze(-1) * expert_stack).sum(dim=1)
-        
+        expert_stack = torch.stack(expert_outputs, dim=1)
+
+        mixed = (gate_weights.unsqueeze(-1) * expert_stack).sum(dim=1)
+        output = self.output_head(mixed)
+
         return output, gate_weights
 
 
@@ -244,7 +246,7 @@ class VirtualShockSensor(nn.Module):
                 'intensity': [batch, 1],
                 'separation_prob': [batch, 1],
                 'latent': [batch, latent_dim],
-                'moe_output': [batch, expert_output_dim] (si compute_moe=True),
+                'moe_output': [batch, 4] (Cp,Cfx,Cfy,Cfz si compute_moe=True),
                 'gate_weights': [batch, num_experts] (si compute_moe=True),
             }
         """

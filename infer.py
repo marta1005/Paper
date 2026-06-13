@@ -44,9 +44,12 @@ def load_trained_models(device='cpu'):
         return None, None, None
 
     if moe_path.exists():
-        moe = MixtureOfExperts(latent_dim=latent_dim,
-                               num_experts=num_experts,
-                               expert_output_dim=expert_out)
+        moe = MixtureOfExperts(
+            latent_dim=latent_dim,
+            num_experts=num_experts,
+            expert_output_dim=expert_out,
+            output_dim=MODEL_CONFIG['moe']['output_dim'],
+        )
         moe.load_state_dict(torch.load(moe_path, map_location=device))
         moe.eval()
         logger.info(f"✓ MoE cargado ({moe_path.name})")

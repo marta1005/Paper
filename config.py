@@ -51,6 +51,7 @@ MODEL_CONFIG = {
         'expert_dims': [32, 64, 128, 64],
         'gating_dims': [32, 64, 4],
         'expert_output_dim': 16,
+        'output_dim': 4,  # Cp, Cfx, Cfy, Cfz
     },
     'sensor': {
         'shock_head_dims': [32, 16, 8, 1],
