@@ -70,6 +70,7 @@ def load_models(device='cpu'):
         latent_dim=MODEL_CONFIG['autoencoder']['latent_dim'],
         num_experts=MODEL_CONFIG['moe']['num_experts'],
         expert_output_dim=MODEL_CONFIG['moe']['expert_output_dim'],
+        output_dim=MODEL_CONFIG['moe']['output_dim'],
     )
     moe.load_state_dict(torch.load(moe_path, map_location=device))
     moe.eval()

@@ -137,12 +137,15 @@ class MOETrainer:
     def __init__(self, encoder, device='cpu'):
         self.device = device
         self.encoder = encoder
-        self.encoder.eval()  # Congelar encoder
+        self.encoder.eval()
+
+        latent_dim = MODEL_CONFIG['autoencoder']['latent_dim']
 
         self.model = MixtureOfExperts(
-            latent_dim=32,
+            latent_dim=latent_dim,
             num_experts=MODEL_CONFIG['moe']['num_experts'],
             expert_output_dim=MODEL_CONFIG['moe']['expert_output_dim'],
+            output_dim=MODEL_CONFIG['moe']['output_dim'],
         ).to(device)
 
         self.optimizer = optim.Adam(
@@ -155,11 +158,22 @@ class MOETrainer:
         self.loss_history = {'train': [], 'val': []}
         self.best_val_loss = float('inf')
         self.patience_counter = 0
+        self._latent_dim = latent_dim
 
-        # Índices de features derivados (columnas en X_derived)
-        self._idx_mach    = DERIVED_FEATURE_INDICES['M_local']          # 9
-        self._idx_shock   = DERIVED_FEATURE_INDICES['shock_indicator']   # 12
-        self._idx_sep     = DERIVED_FEATURE_INDICES['Cf_mag']           # 13
+        self._idx_mach    = DERIVED_FEATURE_INDICES['M_local']
+        self._idx_shock   = DERIVED_FEATURE_INDICES['shock_indicator']
+        self._idx_sep     = DERIVED_FEATURE_INDICES['Cf_mag']
+
+    def _encode_latent(self, X_batch):
+        """Codifica X → z y verifica que la dimensión coincida con el MoE."""
+        z = self.encoder(X_batch)
+        if z.shape[-1] != self._latent_dim:
+            raise RuntimeError(
+                f"Dim mismatch: encoder devuelve z.shape={z.shape}, "
+                f"pero MoE espera latent_dim={self._latent_dim}. "
+                f"Asegúrate de que MixtureOfExperts(latent_dim=32) coincide con el AE."
+            )
+        return z
 
     def _get_physical_indicators(self, X_batch):
         shock_indicator = X_batch[:, self._idx_shock:self._idx_shock + 1]
@@ -176,7 +190,7 @@ class MOETrainer:
             Y_batch = Y_batch.to(self.device)
 
             with torch.no_grad():
-                z = self.encoder(X_batch)
+                z = self._encode_latent(X_batch)
 
             shock_indicator, separation_risk, mach_local = self._get_physical_indicators(X_batch)
 
@@ -184,7 +198,7 @@ class MOETrainer:
                 z, shock_indicator, separation_risk, mach_local
             )
 
-            loss = self.criterion(moe_output, Y_batch[:, :moe_output.shape[1]])
+            loss = self.criterion(moe_output, Y_batch)
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -206,12 +220,12 @@ class MOETrainer:
             X_batch = X_batch.to(self.device)
             Y_batch = Y_batch.to(self.device)
 
-            z = self.encoder(X_batch)
+            z = self._encode_latent(X_batch)
 
             shock_indicator, separation_risk, mach_local = self._get_physical_indicators(X_batch)
 
             moe_output, _ = self.model(z, shock_indicator, separation_risk, mach_local)
-            loss = self.criterion(moe_output, Y_batch[:, :moe_output.shape[1]])
+            loss = self.criterion(moe_output, Y_batch)
 
             total_loss += loss.item()
 
@@ -281,7 +295,8 @@ class SensorTrainer:
         self.encoder = encoder
         self.moe = moe
 
-        self.sensor = VirtualShockSensor(encoder, moe, latent_dim=32).to(device)
+        latent_dim = MODEL_CONFIG['autoencoder']['latent_dim']
+        self.sensor = VirtualShockSensor(encoder, moe, latent_dim=latent_dim).to(device)
 
         for param in self.encoder.parameters():
             param.requires_grad = False
