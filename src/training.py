@@ -50,8 +50,8 @@ class AETrainer:
             x_recon, z = self.model(X_batch)
             
             # Loss (usar gradiente de presión como métrica de importancia)
-            pressure_gradient = torch.abs(torch.gradient(X_batch[:, 2])[0])
-            loss = self.criterion(X_batch, x_recon, gradient_metric=pressure_gradient.unsqueeze(1))
+            pressure_gradient = torch.abs(X_batch[:, 2:3])
+            loss = self.criterion(X_batch, x_recon, gradient_metric=pressure_gradient)
             
             # Backward
             self.optimizer.zero_grad()
@@ -74,8 +74,9 @@ class AETrainer:
             X_batch = X_batch.to(self.device)
             
             x_recon, z = self.model(X_batch)
-            pressure_gradient = torch.abs(torch.gradient(X_batch[:, 2])[0])
-            loss = self.criterion(X_batch, x_recon, gradient_metric=pressure_gradient.unsqueeze(1))
+            # Calcular gradiente de presión de forma robusta
+            pressure_gradient = torch.abs(X_batch[:, 2:3])
+            loss = self.criterion(X_batch, x_recon, gradient_metric=pressure_gradient)
             
             total_loss += loss.item()
         
@@ -139,7 +140,7 @@ class MOETrainer:
         self.encoder.eval()  # Congelar encoder
         
         self.model = MixtureOfExperts(
-            latent_dim=MODEL_CONFIG['moe']['expert_output_dim'],
+            latent_dim=32,  # Salida del encoder
             num_experts=MODEL_CONFIG['moe']['num_experts'],
             expert_output_dim=MODEL_CONFIG['moe']['expert_output_dim'],
         ).to(device)

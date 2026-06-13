@@ -301,13 +301,16 @@ class ReconstructionLoss(nn.Module):
         base_loss = (x_real - x_reconstructed) ** 2
         
         if gradient_metric is not None:
-            # Normalizar gradient metric
+            # Normalizar gradient metric de forma robusta
             grad_mean = gradient_metric.mean()
-            grad_std = gradient_metric.std() + 1e-6
+            grad_std = gradient_metric.std() + 1e-8
             grad_norm = (gradient_metric - grad_mean) / grad_std
+            # Clip para evitar valores extremos
+            grad_norm = torch.clamp(grad_norm, -3.0, 3.0)
             
-            # Amplificar peso en regiones de alto gradiente
+            # Amplificar peso en regiones de alto gradiente (siempre positivo)
             weight = 1.0 + self.weight_high_gradient * torch.relu(grad_norm)
+            weight = torch.clamp(weight, min=0.1, max=100.0)  # Prevenir extremos
             weighted_loss = weight * base_loss
             
             return weighted_loss.mean()
