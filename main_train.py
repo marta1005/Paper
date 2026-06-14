@@ -1,220 +1,175 @@
 #!/usr/bin/env python3
 """
-MAIN SCRIPT: Entrenamiento completo de arquitectura de shock detection
-Shock Detection via Physics-Informed Machine Learning
+Training pipeline: AE -> MoE -> Sensor
 
-Uso:
-    python main_train.py
+Usage:
+    python main_train.py                        # full pipeline
+    python main_train.py --stages ae            # only autoencoder
+    python main_train.py --stages ae moe        # AE + MoE
+    python main_train.py --stages moe           # MoE only (loads saved AE)
+    python main_train.py --stages sensor        # Sensor only (loads saved AE + MoE)
+    python main_train.py --stages moe sensor    # MoE + Sensor (loads saved AE)
+
+Env vars:
+    PAPER_TRAIN_FRACTION   fraction of train data to use  (default 0.05)
+    PAPER_EPOCHS           epochs for AE and Sensor       (default 20)
+    PAPER_BATCH_SIZE       batch size                     (default 256)
+    PAPER_NUM_WORKERS      dataloader workers             (default 0)
 """
+import argparse
 import logging
 import sys
-from pathlib import Path
 
-# Imports
 import torch
 import numpy as np
 
-from config import (
-    SEED, DEVICE, TRAINING_CONFIG, DATA_CONFIG, OUTPUT_DIR,
-    LOGGING_CONFIG
-)
+from config import SEED, DEVICE, DATA_CONFIG, OUTPUT_DIR, LOGGING_CONFIG, MODEL_DIR, MODEL_CONFIG
 from src.data_loader import get_dataloaders
-from src.preprocessing import CFDPreprocessor
+from src.models import ShockAutoencoder, MixtureOfExperts
 from src.training import AETrainer, MOETrainer, SensorTrainer
 from src.evaluation import ModelEvaluator, VisualizationTools, save_evaluation_report
 
-# ============ SETUP LOGGING ============
 logging.basicConfig(
     level=LOGGING_CONFIG['log_level'],
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(LOGGING_CONFIG['log_file'])
-    ] if LOGGING_CONFIG['save_log'] else [logging.StreamHandler()]
+    handlers=(
+        [logging.StreamHandler(), logging.FileHandler(LOGGING_CONFIG['log_file'])]
+        if LOGGING_CONFIG['save_log']
+        else [logging.StreamHandler()]
+    ),
 )
-
 logger = logging.getLogger(__name__)
 
-# Set random seed
 torch.manual_seed(SEED)
 np.random.seed(SEED)
 
-# GPU optimizations
 if torch.cuda.is_available():
-    torch.backends.cudnn.benchmark = True          # Autotuning de kernels
-    torch.set_float32_matmul_precision('high')     # TF32 en Ampere+
+    torch.backends.cudnn.benchmark = True
+    torch.set_float32_matmul_precision('high')
+
+
+def load_ae(device):
+    cfg = MODEL_CONFIG['autoencoder']
+    ae  = ShockAutoencoder(input_dim=cfg['input_dim'], latent_dim=cfg['latent_dim'],
+                           batch_norm=cfg['batch_norm'], dropout=cfg['dropout']).to(device)
+    path = MODEL_DIR / 'autoencoder_best.pt'
+    if not path.exists():
+        logger.error(f"AE checkpoint not found: {path} — run with --stages ae first")
+        sys.exit(1)
+    ae.load_state_dict(torch.load(path, map_location=device))
+    ae.eval()
+    logger.info(f"Loaded AE from {path}")
+    return ae
+
+
+def load_moe(device):
+    cfg = MODEL_CONFIG
+    moe = MixtureOfExperts(
+        latent_dim=cfg['autoencoder']['latent_dim'],
+        num_experts=cfg['moe']['num_experts'],
+        expert_output_dim=cfg['moe']['expert_output_dim'],
+        output_dim=cfg['moe']['output_dim'],
+    ).to(device)
+    path = MODEL_DIR / 'moe_best.pt'
+    if not path.exists():
+        logger.error(f"MoE checkpoint not found: {path} — run with --stages moe first")
+        sys.exit(1)
+    moe.load_state_dict(torch.load(path, map_location=device))
+    moe.eval()
+    logger.info(f"Loaded MoE from {path}")
+    return moe
 
 
 def main():
-    """
-    Pipeline completo:
-    1. Carga datos
-    2. Preprocesamiento (variables derivadas)
-    3. Entrena Autoencoder
-    4. Entrena Mixture of Experts
-    5. Entrena Sensor Virtual
-    6. Evaluación completa
-    """
-    
-    logger.info("="*80)
-    logger.info("SHOCK DETECTION PIPELINE")
-    logger.info("="*80)
-    
-    # Device
-    device = torch.device('cuda' if torch.cuda.is_available() and DEVICE == 'cuda' else 'cpu')
-    logger.info(f"Using device: {device}")
-    
-    # ============ STAGE 1: DATA LOADING ============
-    logger.info("\n[STAGE 1] Loading data...")
-    
-    sample_fraction = DATA_CONFIG.get('train_sample_fraction', 0.1)
-    logger.info(f"Using {100*sample_fraction:.1f}% of training data")
-    
-    try:
-        train_loader, val_loader, test_loader, scaler = get_dataloaders(
-            sample_fraction=sample_fraction
-        )
-        logger.info(f"✓ Data loaded successfully")
-        logger.info(f"  Train batches: {len(train_loader)}")
-        logger.info(f"  Val batches: {len(val_loader)}")
-        logger.info(f"  Test batches: {len(test_loader)}")
-    except Exception as e:
-        logger.error(f"Failed to load data: {e}")
-        return False
-    
-    # ============ STAGE 2: PREPROCESSING ============
-    logger.info("\n[STAGE 2] Preprocessing (computing derived features)...")
-    
-    try:
-        preprocessor = CFDPreprocessor()
-        logger.info("✓ Preprocessor initialized")
-        logger.info("  Derived features will be computed on-the-fly during training")
-    except Exception as e:
-        logger.error(f"Failed to initialize preprocessor: {e}")
-        return False
-    
-    # ============ STAGE 3: AUTOENCODER TRAINING ============
-    logger.info("\n[STAGE 3] Training Autoencoder...")
-    logger.info(f"  Architecture: 19 -> 128 -> 64 -> 32 (latent) -> 64 -> 128 -> 19")
-    logger.info(f"  Training for {TRAINING_CONFIG['num_epochs']} epochs")
-    
-    try:
-        ae_trainer = AETrainer(device=device)
-        ae_model = ae_trainer.train(train_loader, val_loader, num_epochs=TRAINING_CONFIG['num_epochs'])
-        logger.info("✓ Autoencoder training completed")
-        logger.info(f"  Best validation loss: {ae_trainer.best_val_loss:.6f}")
-    except Exception as e:
-        logger.error(f"Failed to train autoencoder: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-    
-    # ============ STAGE 4: MIXTURE OF EXPERTS TRAINING ============
-    logger.info("\n[STAGE 4] Training Mixture of Experts...")
-    logger.info(f"  Num experts: 4 (Adherent | Transonic | Shock | Separated)")
-    
-    try:
-        encoder = ae_model.encoder
-        moe_trainer = MOETrainer(encoder=encoder, device=device)
-        moe_trainer.train(train_loader, val_loader, num_epochs=TRAINING_CONFIG['num_epochs']//2)
-        moe_model = moe_trainer.model
-        logger.info("✓ MoE training completed")
-    except Exception as e:
-        logger.error(f"Failed to train MoE: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-    
-    # ============ STAGE 5: SENSOR TRAINING ============
-    logger.info("\n[STAGE 5] Training Virtual Shock Sensor...")
-    logger.info("  Heads: shock_head (BCE) + intensity_head (MSE)")
-    logger.info("  Encoder + MoE frozen; only heads trained")
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--stages', nargs='+',
+        choices=['ae', 'moe', 'sensor'],
+        default=['ae', 'moe', 'sensor'],
+        help='Stages to run (default: all three)'
+    )
+    args = parser.parse_args()
+    stages = set(args.stages)
 
-    try:
+    device = torch.device('cuda' if torch.cuda.is_available() and DEVICE == 'cuda' else 'cpu')
+
+    logger.info("=" * 70)
+    logger.info(f"SHOCK DETECTION PIPELINE  |  stages: {sorted(stages)}  |  device: {device}")
+    logger.info("=" * 70)
+
+    frac = DATA_CONFIG.get('train_sample_fraction', 0.05)
+    logger.info(f"\n[DATA] Loading {100*frac:.1f}% of training data...")
+    train_loader, val_loader, test_loader, scaler = get_dataloaders(sample_fraction=frac)
+    logger.info(f"Batches — train: {len(train_loader)}, val: {len(val_loader)}, test: {len(test_loader)}")
+
+    ae_model  = None
+    moe_model = None
+
+    # ── Autoencoder ────────────────────────────────────────────────────────────
+    if 'ae' in stages:
+        logger.info("\n[AE] Training Autoencoder  (14 -> 8 -> 14)")
+        ae_trainer = AETrainer(device=device)
+        ae_model   = ae_trainer.train(train_loader, val_loader)
+        logger.info(f"AE best val loss: {ae_trainer.best_val_loss:.6f}")
+
+        try:
+            ae_eval_obj = ModelEvaluator(ae_model, device=device, is_autoencoder=True)
+            ae_eval     = ae_eval_obj.evaluate(test_loader, return_predictions=True)
+            ae_eval_obj.log_metrics(ae_eval['metrics'])
+            save_evaluation_report(ae_eval['metrics'], ae_eval, model_name='autoencoder')
+            viz = VisualizationTools()
+            viz.plot_losses(ae_trainer.loss_history['train'], ae_trainer.loss_history['val'],
+                            save_path=OUTPUT_DIR / 'plots' / 'ae_losses.png')
+            if 'y_true' in ae_eval and 'y_pred' in ae_eval:
+                viz.plot_reconstruction_error(ae_eval['y_true'], ae_eval['y_pred'],
+                                              save_path=OUTPUT_DIR / 'plots' / 'reconstruction_error.png')
+            if 'z' in ae_eval:
+                viz.plot_latent_space(ae_eval['z'][:10000],
+                                      save_path=OUTPUT_DIR / 'plots' / 'latent_space.png')
+        except Exception as e:
+            logger.warning(f"AE eval/viz failed (non-critical): {e}")
+    else:
+        ae_model = load_ae(device)
+
+    # ── Mixture of Experts ─────────────────────────────────────────────────────
+    if 'moe' in stages:
+        logger.info("\n[MoE] Training Mixture of Experts  (4 experts, 8 -> 4)")
+        moe_trainer = MOETrainer(encoder=ae_model.encoder, device=device)
+        moe_model   = moe_trainer.train(train_loader, val_loader)
+        logger.info(f"MoE best val loss: {moe_trainer.best_val_loss:.6f}")
+
+        try:
+            viz = VisualizationTools()
+            viz.plot_losses(moe_trainer.loss_history['train'], moe_trainer.loss_history['val'],
+                            save_path=OUTPUT_DIR / 'plots' / 'moe_losses.png')
+        except Exception as e:
+            logger.warning(f"MoE viz failed (non-critical): {e}")
+    else:
+        moe_model = load_moe(device)
+
+    # ── Shock Sensor ───────────────────────────────────────────────────────────
+    if 'sensor' in stages:
+        logger.info("\n[Sensor] Training Virtual Shock Sensor  (pseudo-labels from MoE + isentropic physics)")
         sensor_trainer = SensorTrainer(
             encoder=ae_model.encoder,
             moe=moe_model,
-            device=device
+            scaler=scaler,
+            device=device,
         )
-        sensor_model = sensor_trainer.train(train_loader, val_loader)
-        logger.info("✓ Sensor training completed")
-        logger.info(f"  Best validation loss: {sensor_trainer.best_val_loss:.6f}")
-    except Exception as e:
-        logger.error(f"Failed to train Sensor: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+        sensor_trainer.train(train_loader, val_loader)
+        logger.info(f"Sensor best val loss: {sensor_trainer.best_val_loss:.6f}")
 
-    # ============ STAGE 6: EVALUATION ============
-    logger.info("\n[STAGE 6] Evaluation...")
+        try:
+            viz = VisualizationTools()
+            viz.plot_losses(sensor_trainer.loss_history['train'], sensor_trainer.loss_history['val'],
+                            save_path=OUTPUT_DIR / 'plots' / 'sensor_losses.png')
+        except Exception as e:
+            logger.warning(f"Sensor viz failed (non-critical): {e}")
 
-    try:
-        # Evaluación de reconstrucción del AE (X→X̂)
-        ae_evaluator = ModelEvaluator(ae_model, device=device, is_autoencoder=True)
-        ae_eval = ae_evaluator.evaluate(test_loader, return_predictions=True)
-        ae_evaluator.log_metrics(ae_eval['metrics'])
-        save_evaluation_report(ae_eval['metrics'], ae_eval, model_name='autoencoder')
-
-        logger.info("✓ Evaluation completed")
-    except Exception as e:
-        logger.error(f"Failed evaluation: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-    
-    # ============ STAGE 7: VISUALIZATION ============
-    logger.info("\n[STAGE 7] Generating visualizations...")
-
-    try:
-        viz = VisualizationTools()
-        eval_result = ae_eval  # alias
-
-        # Loss curves AE
-        viz.plot_losses(
-            ae_trainer.loss_history['train'],
-            ae_trainer.loss_history['val'],
-            save_path=OUTPUT_DIR / 'plots' / 'ae_losses.png'
-        )
-
-        # Loss curves MoE
-        viz.plot_losses(
-            moe_trainer.loss_history['train'],
-            moe_trainer.loss_history['val'],
-            save_path=OUTPUT_DIR / 'plots' / 'moe_losses.png'
-        )
-
-        # Reconstruction error distribution
-        if 'y_true' in eval_result and 'y_pred' in eval_result:
-            viz.plot_reconstruction_error(
-                eval_result['y_true'],
-                eval_result['y_pred'],
-                save_path=OUTPUT_DIR / 'plots' / 'reconstruction_error.png'
-            )
-
-        # Latent space
-        if 'z' in eval_result:
-            viz.plot_latent_space(
-                eval_result['z'][:10000],
-                save_path=OUTPUT_DIR / 'plots' / 'latent_space.png'
-            )
-
-        logger.info("✓ Visualizations saved")
-    except Exception as e:
-        logger.warning(f"Visualization failed (non-critical): {e}")
-    
-    # ============ SUMMARY ============
-    logger.info("\n" + "="*80)
-    logger.info("PIPELINE COMPLETED SUCCESSFULLY")
-    logger.info("="*80)
-    logger.info(f"Results saved to: {OUTPUT_DIR}")
-    logger.info(f"  - Models: {OUTPUT_DIR}/models/")
-    logger.info(f"  - Results: {OUTPUT_DIR}/results/")
-    logger.info(f"  - Plots: {OUTPUT_DIR}/plots/")
-    logger.info("="*80 + "\n")
-    
-    return True
+    logger.info("\n" + "=" * 70)
+    logger.info(f"DONE  |  Results in: {OUTPUT_DIR}")
+    logger.info("=" * 70)
 
 
 if __name__ == '__main__':
-    success = main()
-    sys.exit(0 if success else 1)
+    main()

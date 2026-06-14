@@ -41,15 +41,15 @@ PYCHECK
 
 # ---------- ajustes de producción (sobrescriben config.py en runtime) ----------
 if [[ "$DEMO" == false ]]; then
-  echo "[launch] Modo PRODUCCIÓN: 50% datos, 100 épocas, batch 1024"
-  export PAPER_TRAIN_FRACTION=0.50
+  echo "[launch] Modo PRODUCCIÓN: 100% datos, 100 épocas, batch 16384"
+  export PAPER_TRAIN_FRACTION=1.0
   export PAPER_EPOCHS=100
-  export PAPER_BATCH_SIZE=1024
-  export PAPER_NUM_WORKERS=4
+  export PAPER_BATCH_SIZE=16384
+  export PAPER_NUM_WORKERS=8
 else
-  echo "[launch] Modo DEMO: 5% datos, 20 épocas, batch 256"
+  echo "[launch] Modo DEMO: 5% datos, 5 épocas, batch 16384"
   export PAPER_TRAIN_FRACTION=0.05
-  export PAPER_EPOCHS=20
+  export PAPER_EPOCHS=5
   export PAPER_BATCH_SIZE=256
   export PAPER_NUM_WORKERS=0
 fi
