@@ -209,7 +209,14 @@ class SensorTrainer:
             weight_decay=TRAINING_CONFIG['weight_decay'],
         )
 
-        self.criterion_bce = nn.BCEWithLogitsLoss()
+        # Shock labels: ~14% positive → pos_weight = 86/14 ≈ 6.0 to avoid collapse to all-zero
+        # Sep labels:   ~37% positive → pos_weight = 63/37 ≈ 1.7 (mild imbalance)
+        self.criterion_bce_shock = nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor([6.0]).to(device)
+        )
+        self.criterion_bce_sep = nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor([1.7]).to(device)
+        )
         self.criterion_mse = nn.MSELoss()
         self.loss_history  = {'train': [], 'val': []}
         self.best_val_loss = float('inf')
@@ -276,9 +283,9 @@ class SensorTrainer:
             shock_logit, intensity, sep_logit = self._forward_heads(X_batch)
 
             loss = (
-                self.criterion_bce(shock_logit, shock_label) +
-                self.criterion_mse(intensity,   intensity_label) +
-                self.criterion_bce(sep_logit,   sep_label)
+                self.criterion_bce_shock(shock_logit, shock_label) +
+                self.criterion_mse(intensity,          intensity_label) +
+                self.criterion_bce_sep(sep_logit,      sep_label)
             )
 
             self.optimizer.zero_grad()
@@ -306,9 +313,9 @@ class SensorTrainer:
             shock_label, intensity_label, sep_label = self._make_labels(X_batch, Y_batch)
             shock_logit, intensity, sep_logit = self._forward_heads(X_batch)
             loss = (
-                self.criterion_bce(shock_logit, shock_label) +
-                self.criterion_mse(intensity,   intensity_label) +
-                self.criterion_bce(sep_logit,   sep_label)
+                self.criterion_bce_shock(shock_logit, shock_label) +
+                self.criterion_mse(intensity,          intensity_label) +
+                self.criterion_bce_sep(sep_logit,      sep_label)
             )
             total += loss.item()
         avg = total / len(val_loader)

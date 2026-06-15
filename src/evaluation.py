@@ -115,23 +115,92 @@ class VisualizationTools:
         return fig
 
     @staticmethod
-    def plot_latent_space(z, labels=None, save_path=None):
+    def plot_latent_space(z, X_raw=None, save_path=None):
         from sklearn.decomposition import PCA
         pca  = PCA(n_components=2)
         z_2d = pca.fit_transform(z)
-        fig, ax = plt.subplots(figsize=(9, 7))
-        sc = ax.scatter(z_2d[:, 0], z_2d[:, 1], c=labels, cmap='viridis', alpha=0.6, s=5)
-        if labels is not None:
-            fig.colorbar(sc, ax=ax)
-        ax.set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]:.1%})')
-        ax.set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]:.1%})')
-        ax.set_title('Latent Space (PCA)')
-        ax.grid(True, alpha=0.3)
-        if save_path:
-            fig.savefig(save_path, dpi=150, bbox_inches='tight')
-            logger.info(f"Saved {save_path}")
-        plt.close(fig)
-        return fig
+        var0 = pca.explained_variance_ratio_[0]
+        var1 = pca.explained_variance_ratio_[1]
+
+    @staticmethod
+    def _latent_scatter(fig, axes, z_2d, X, features, var0, var1):
+        for ax, (col, label, cmap) in zip(axes, features):
+            sc = ax.scatter(z_2d[:, 0], z_2d[:, 1],
+                            c=X[:, col], cmap=cmap,
+                            alpha=0.4, s=2, rasterized=True)
+            fig.colorbar(sc, ax=ax, label=label, pad=0.02)
+            ax.set_xlabel(f'PC1 ({var0:.1%})', fontsize=8)
+            ax.set_ylabel(f'PC2 ({var1:.1%})', fontsize=8)
+            ax.set_title(label, fontsize=10, fontweight='bold')
+            ax.tick_params(labelsize=7)
+            ax.grid(True, alpha=0.2)
+
+    @staticmethod
+    def plot_latent_space(z, X_raw=None, save_path=None):
+        from sklearn.decomposition import PCA
+        pca  = PCA(n_components=2)
+        z_2d = pca.fit_transform(z)
+        var0 = pca.explained_variance_ratio_[0]
+        var1 = pca.explained_variance_ratio_[1]
+
+        RAW_FEATURES = [
+            (0, 'x',       'viridis'),
+            (1, 'y',       'viridis'),
+            (2, 'z',       'viridis'),
+            (3, 'nx',      'RdBu'),
+            (4, 'ny',      'RdBu'),
+            (5, 'nz',      'RdBu'),
+            (6, 'Mach',    'plasma'),
+            (7, 'AoA',     'coolwarm'),
+            (8, 'Pi×1e-5', 'inferno'),
+        ]
+        DERIVED_FEATURES = [
+            (9,  'q_dyn',    'plasma'),
+            (10, 'Pi_norm',  'inferno'),
+            (11, 'AoA_sin',  'coolwarm'),
+            (12, 'L_factor', 'viridis'),
+            (13, 'Cp_crit',  'RdYlBu_r'),
+        ]
+
+        has_raw     = X_raw is not None and X_raw.shape[1] >= 9
+        has_derived = X_raw is not None and X_raw.shape[1] >= 14
+
+        if has_raw:
+            fig1, axes1 = plt.subplots(3, 3, figsize=(15, 13))
+            VisualizationTools._latent_scatter(fig1, axes1.flatten(), z_2d, X_raw, RAW_FEATURES, var0, var1)
+            fig1.suptitle('Latent Space (PCA) — original features', fontsize=13, y=1.01)
+            plt.tight_layout()
+            p1 = str(save_path).replace('.png', '_raw.png') if save_path else None
+            if p1:
+                fig1.savefig(p1, dpi=150, bbox_inches='tight')
+                logger.info(f"Saved {p1}")
+            plt.close(fig1)
+
+        if has_derived:
+            fig2, axes2 = plt.subplots(2, 3, figsize=(15, 9))
+            axes2_flat = axes2.flatten()
+            VisualizationTools._latent_scatter(fig2, axes2_flat[:5], z_2d, X_raw, DERIVED_FEATURES, var0, var1)
+            axes2_flat[5].set_visible(False)
+            fig2.suptitle('Latent Space (PCA) — derived physics features', fontsize=13, y=1.01)
+            plt.tight_layout()
+            p2 = str(save_path).replace('.png', '_derived.png') if save_path else None
+            if p2:
+                fig2.savefig(p2, dpi=150, bbox_inches='tight')
+                logger.info(f"Saved {p2}")
+            plt.close(fig2)
+
+        if not has_raw:
+            fig, ax = plt.subplots(figsize=(9, 7))
+            ax.scatter(z_2d[:, 0], z_2d[:, 1], alpha=0.5, s=3, rasterized=True)
+            ax.set_xlabel(f'PC1 ({var0:.1%})')
+            ax.set_ylabel(f'PC2 ({var1:.1%})')
+            ax.set_title('Latent Space (PCA)')
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            if save_path:
+                fig.savefig(save_path, dpi=150, bbox_inches='tight')
+                logger.info(f"Saved {save_path}")
+            plt.close(fig)
 
     @staticmethod
     def plot_reconstruction_error(y_true, y_pred, save_path=None):
