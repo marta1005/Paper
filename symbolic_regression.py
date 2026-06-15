@@ -23,12 +23,12 @@ logger = logging.getLogger(__name__)
 
 # All 14 input features (9 original + 5 derived from X only)
 ALL_FEATURES = [
-    'x', 'y', 'z', 'nx', 'ny', 'nz', 'Mach', 'AoA', 'Pi_1e-5',
+    'x', 'y', 'z', 'nx', 'ny', 'nz', 'Mach', 'AoA', 'Pi_1e5',
     'q_dyn', 'Pi_norm', 'AoA_sin', 'L_factor', 'Cp_crit',
 ]
 
 # Physics-relevant subset for symbolic regression (exclude pure geometric coords)
-SR_FEATURES = ['Mach', 'AoA', 'Pi_1e-5', 'q_dyn', 'Pi_norm', 'AoA_sin', 'L_factor', 'Cp_crit']
+SR_FEATURES = ['Mach', 'AoA', 'Pi_1e5', 'q_dyn', 'Pi_norm', 'AoA_sin', 'L_factor', 'Cp_crit']
 SR_IDX      = [ALL_FEATURES.index(n) for n in SR_FEATURES]
 
 

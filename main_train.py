@@ -107,7 +107,7 @@ def main():
 
     # ── Autoencoder ────────────────────────────────────────────────────────────
     if 'ae' in stages:
-        logger.info("\n[AE] Training Autoencoder  (14 -> 8 -> 14)")
+        logger.info("\n[AE] Training Autoencoder  (14 -> 128 -> 64 -> 32 -> 64 -> 128 -> 14)")
         ae_trainer = AETrainer(device=device)
         ae_model   = ae_trainer.train(train_loader, val_loader)
         logger.info(f"AE best val loss: {ae_trainer.best_val_loss:.6f}")
@@ -124,7 +124,10 @@ def main():
                 viz.plot_reconstruction_error(ae_eval['y_true'], ae_eval['y_pred'],
                                               save_path=OUTPUT_DIR / 'plots' / 'reconstruction_error.png')
             if 'z' in ae_eval:
-                viz.plot_latent_space(ae_eval['z'][:10000],
+                n = min(100_000, len(ae_eval['z']))
+                idx = np.random.default_rng(42).choice(len(ae_eval['z']), n, replace=False)
+                # y_true == X (normalised, 14 features) for AE — pass as X_raw for colouring
+                viz.plot_latent_space(ae_eval['z'][idx], X_raw=ae_eval['y_true'][idx],
                                       save_path=OUTPUT_DIR / 'plots' / 'latent_space.png')
         except Exception as e:
             logger.warning(f"AE eval/viz failed (non-critical): {e}")
@@ -133,7 +136,7 @@ def main():
 
     # ── Mixture of Experts ─────────────────────────────────────────────────────
     if 'moe' in stages:
-        logger.info("\n[MoE] Training Mixture of Experts  (4 experts, 8 -> 4)")
+        logger.info("\n[MoE] Training Mixture of Experts  (4 experts, latent=32 -> output=4)")
         moe_trainer = MOETrainer(encoder=ae_model.encoder, device=device)
         moe_model   = moe_trainer.train(train_loader, val_loader)
         logger.info(f"MoE best val loss: {moe_trainer.best_val_loss:.6f}")
@@ -149,7 +152,7 @@ def main():
 
     # ── Shock Sensor ───────────────────────────────────────────────────────────
     if 'sensor' in stages:
-        logger.info("\n[Sensor] Training Virtual Shock Sensor  (pseudo-labels from MoE + isentropic physics)")
+        logger.info("\n[Sensor] Training Virtual Shock Sensor  (CFD ground-truth labels: Cp<Cp_crit, Cfx<0)")
         sensor_trainer = SensorTrainer(
             encoder=ae_model.encoder,
             moe=moe_model,
