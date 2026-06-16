@@ -77,9 +77,20 @@ class ModelEvaluator:
 class VisualizationTools:
     @staticmethod
     def plot_losses(train_losses, val_losses, save_path=None):
+        n_train = len(train_losses)
+        n_val   = len(val_losses)
+        train_x = range(1, n_train + 1)
+        # val is recorded every k epochs — infer k from the length ratio
+        if n_val > 0 and n_val < n_train:
+            step  = round(n_train / n_val)
+            val_x = range(step, n_train + 1, step)
+        else:
+            val_x = range(1, n_val + 1)
+
         fig, ax = plt.subplots(figsize=(10, 6))
-        ax.plot(train_losses, label='Train', linewidth=2)
-        ax.plot(val_losses,   label='Val',   linewidth=2)
+        ax.plot(train_x, train_losses, label='Train', linewidth=2)
+        ax.plot(val_x,   val_losses,   label='Val',   linewidth=2,
+                marker='o', markersize=3)
         ax.set_xlabel('Epoch')
         ax.set_ylabel('Loss')
         ax.legend()
