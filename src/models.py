@@ -95,8 +95,10 @@ class SensorHead(nn.Module):
         for i in range(len(dims) - 1):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
             if i < len(dims) - 2:
-                layers.append(nn.BatchNorm1d(dims[i + 1]))
+                # No BatchNorm: small heads (34→64→32→16→1) don't benefit from BN
+                # and BN causes train/eval discrepancy when scaler differs between runs
                 layers.append(nn.LeakyReLU(0.2))
+                layers.append(nn.Dropout(0.1))
         self.network = nn.Sequential(*layers)
 
     def forward(self, x):

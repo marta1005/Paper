@@ -102,6 +102,10 @@ def main():
     train_loader, val_loader, test_loader, scaler = get_dataloaders(sample_fraction=frac)
     logger.info(f"Batches — train: {len(train_loader)}, val: {len(val_loader)}, test: {len(test_loader)}")
 
+    # Save scaler so inference scripts use the same normalization as training
+    np.save(str(MODEL_DIR / 'scaler.npy'), scaler)
+    logger.info(f"Scaler saved to {MODEL_DIR / 'scaler.npy'}")
+
     ae_model  = None
     moe_model = None
 

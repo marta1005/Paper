@@ -85,13 +85,13 @@ def load_data_with_sampling(sample_fraction=1.0):
     return X_train, Y_train, X_val, Y_val, X_test, Y_test
 
 
-def get_dataloaders(sample_fraction=None):
+def get_dataloaders(sample_fraction=None, scaler=None):
     if sample_fraction is None:
         sample_fraction = DATA_CONFIG.get('train_sample_fraction', 0.05)
 
     X_train, Y_train, X_val, Y_val, X_test, Y_test = load_data_with_sampling(sample_fraction)
 
-    train_ds = CFDDataset(X_train, Y_train)
+    train_ds = CFDDataset(X_train, Y_train, scaler=scaler)
     scaler   = train_ds.scaler
     val_ds   = CFDDataset(X_val,   Y_val,   scaler=scaler)
     test_ds  = CFDDataset(X_test,  Y_test,  scaler=scaler)

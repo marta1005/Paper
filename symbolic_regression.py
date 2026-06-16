@@ -147,7 +147,11 @@ def main():
         sys.exit(1)
     sensor = sensor.to(device)
 
-    _, _, test_loader, _ = get_dataloaders(sample_fraction=0.01)
+    scaler_path = MODEL_DIR / 'scaler.npy'
+    saved_scaler = np.load(str(scaler_path), allow_pickle=True).item() if scaler_path.exists() else None
+    if saved_scaler is None:
+        logger.warning("scaler.npy not found — using locally recomputed scaler (may differ from training)")
+    _, _, test_loader, _ = get_dataloaders(sample_fraction=0.01, scaler=saved_scaler)
     X_phys, y_target = extract_data(sensor, test_loader, args.samples, device, args.target)
 
     if args.target == 'latent':
