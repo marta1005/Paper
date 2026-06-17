@@ -26,7 +26,7 @@ import numpy as np
 from config import SEED, DEVICE, DATA_CONFIG, OUTPUT_DIR, LOGGING_CONFIG, MODEL_DIR, MODEL_CONFIG
 from src.data_loader import get_dataloaders
 from src.models import ShockAutoencoder, MixtureOfExperts
-from src.training import AETrainer, MOETrainer, SensorTrainer
+from src.training import AETrainer, MOETrainer, SensorTrainer, SurrogateTrainer
 from src.evaluation import ModelEvaluator, VisualizationTools, save_evaluation_report
 
 logging.basicConfig(
@@ -84,9 +84,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '--stages', nargs='+',
-        choices=['ae', 'moe', 'sensor'],
+        choices=['ae', 'moe', 'sensor', 'surrogate'],
         default=['ae', 'moe', 'sensor'],
-        help='Stages to run (default: all three)'
+        help='Stages to run (default: ae moe sensor). Use surrogate for the new shock-gated model.'
     )
     args = parser.parse_args()
     stages = set(args.stages)
@@ -172,6 +172,28 @@ def main():
                             save_path=OUTPUT_DIR / 'plots' / 'sensor_losses.png')
         except Exception as e:
             logger.warning(f"Sensor viz failed (non-critical): {e}")
+
+    # ── Shock-Gated Surrogate ──────────────────────────────────────────────────
+    if 'surrogate' in stages:
+        logger.info("\n[Surrogate] Training Shock-Gated Surrogate  (ShockIndicator + MoE, no AE)")
+        surrogate_trainer = SurrogateTrainer(scaler=scaler, device=device)
+        surrogate_trainer.train(train_loader, val_loader)
+        logger.info(f"Surrogate best val loss: {surrogate_trainer.best_val_loss:.6f}")
+
+        try:
+            viz = VisualizationTools()
+            viz.plot_losses(surrogate_trainer.loss_history['train'],
+                            surrogate_trainer.loss_history['val'],
+                            save_path=OUTPUT_DIR / 'plots' / 'surrogate_losses.png')
+            surr_eval_obj = ModelEvaluator(surrogate_trainer.model, device=device, is_autoencoder=False)
+            surr_eval     = surr_eval_obj.evaluate(test_loader, return_predictions=True)
+            surr_eval_obj.log_metrics(surr_eval['metrics'])
+            save_evaluation_report(surr_eval['metrics'], surr_eval, model_name='surrogate')
+            if 'y_true' in surr_eval and 'y_pred' in surr_eval:
+                viz.plot_predictions_vs_truth(surr_eval['y_true'], surr_eval['y_pred'],
+                                              save_path=OUTPUT_DIR / 'plots' / 'surrogate_predictions.png')
+        except Exception as e:
+            logger.warning(f"Surrogate eval/viz failed (non-critical): {e}")
 
     logger.info("\n" + "=" * 70)
     logger.info(f"DONE  |  Results in: {OUTPUT_DIR}")

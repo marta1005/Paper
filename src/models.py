@@ -105,6 +105,94 @@ class SensorHead(nn.Module):
         return self.network(x)
 
 
+class ShockIndicator(nn.Module):
+    """
+    Predicts shock probability from X only (geometry + flight conditions, never Cp/Y).
+    Learns WHERE on the surface the shock forms given geometry + flight condition.
+    Supervised by physics label: shock ↔ Cp_real < Cp_crit(Mach).
+
+    Replaces the autoencoder: instead of a generic latent, the representation
+    is an explicit scalar shock score interpretable as P(M_local > 1).
+    """
+    def __init__(self, in_dim=14, hidden=None):
+        super().__init__()
+        if hidden is None:
+            hidden = [64, 32, 16]
+        dims   = [in_dim] + hidden + [1]
+        layers = []
+        for i in range(len(dims) - 1):
+            layers.append(nn.Linear(dims[i], dims[i + 1]))
+            if i < len(dims) - 2:
+                layers.append(nn.LeakyReLU(0.2))
+                layers.append(nn.Dropout(0.1))
+        self.network = nn.Sequential(*layers)
+
+    def forward(self, x):
+        logit = self.network(x)
+        return logit, torch.sigmoid(logit)
+
+
+class ShockGatedMoE(nn.Module):
+    """
+    MoE gated by the shock indicator score + full X.
+    Each expert specialises in one flow regime; the Cp discontinuity at the
+    shock emerges from the jump between expert predictions rather than from
+    a smooth network trying to approximate a discontinuous function.
+    """
+    def __init__(self, in_dim=14, num_experts=4, expert_hidden=None, output_dim=4):
+        super().__init__()
+        if expert_hidden is None:
+            expert_hidden = [128, 256, 128]
+
+        # Gate: [shock_prob(1) | X(14)] → num_experts weights
+        self.gate = nn.Sequential(
+            nn.Linear(in_dim + 1, 64), nn.ReLU(),
+            nn.Linear(64, 32),         nn.ReLU(),
+            nn.Linear(32, num_experts),
+            nn.Softmax(dim=-1),
+        )
+
+        # Experts: full X → [Cp, Cfx, Cfy, Cfz]
+        self.experts = nn.ModuleList([
+            _mlp([in_dim] + expert_hidden + [output_dim], batch_norm=True, dropout=0.1)
+            for _ in range(num_experts)
+        ])
+
+    def forward(self, x, shock_prob):
+        gates        = self.gate(torch.cat([x, shock_prob], dim=1))
+        expert_stack = torch.stack([e(x) for e in self.experts], dim=1)  # [B, E, 4]
+        output       = (gates.unsqueeze(-1) * expert_stack).sum(dim=1)
+        return output, gates
+
+
+class AeroSurrogate(nn.Module):
+    """
+    Full aerodynamic surrogate: ShockIndicator → ShockGatedMoE.
+
+    Replaces the AE + MoE pipeline. No latent bottleneck — the physics-derived
+    shock score is the routing signal. Experts learn smooth fields per regime;
+    the Cp shock discontinuity emerges from their transition.
+
+    Training uses Y (Cp < Cp_crit) to supervise the indicator; inference
+    uses only X.
+    """
+    def __init__(self, in_dim=14, num_experts=4, output_dim=4,
+                 indicator_hidden=None, expert_hidden=None):
+        super().__init__()
+        self.shock_indicator = ShockIndicator(in_dim, indicator_hidden)
+        self.moe             = ShockGatedMoE(in_dim, num_experts, expert_hidden, output_dim)
+
+    def forward(self, x):
+        shock_logit, shock_prob = self.shock_indicator(x)
+        pred, gates             = self.moe(x, shock_prob)
+        return {
+            'pred':         pred,
+            'shock_logit':  shock_logit,
+            'shock_prob':   shock_prob,
+            'gate_weights': gates,
+        }
+
+
 class VirtualShockSensor(nn.Module):
     """
     Sensor trained with CFD-derived shock labels (from Y: Cp gradient + Cfx sign).

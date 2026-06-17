@@ -113,7 +113,7 @@ def run_pysr(X, y, feature_names, n_iter=40):
         return None
     model = PySRRegressor(
         niterations=n_iter,
-        binary_operators=['+', '-', '*', '/', '**'],
+        binary_operators=['+', '-', '*', '/', '^'],
         unary_operators=['exp', 'log', 'abs', 'sqrt', 'tanh'],
         maxsize=20, populations=15, population_size=33,
         model_selection='best', parsimony=0.003, random_state=42, verbosity=1,
@@ -152,7 +152,12 @@ def main():
     if saved_scaler is None:
         logger.warning("scaler.npy not found — using locally recomputed scaler (may differ from training)")
     _, _, test_loader, _ = get_dataloaders(sample_fraction=0.01, scaler=saved_scaler)
-    X_phys, y_target = extract_data(sensor, test_loader, args.samples, device, args.target)
+    # Shuffle test data so we sample across all Mach conditions, not just the first simulation
+    test_ds = test_loader.dataset
+    shuffled_loader = torch.utils.data.DataLoader(
+        test_ds, batch_size=test_loader.batch_size, shuffle=True, num_workers=0
+    )
+    X_phys, y_target = extract_data(sensor, shuffled_loader, args.samples, device, args.target)
 
     if args.target == 'latent':
         from sklearn.decomposition import PCA
