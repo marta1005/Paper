@@ -53,7 +53,7 @@ echo "[launch] Log → $LOG"
 echo "[launch] Iniciando pipeline..."
 
 cd "$PROJECT_DIR"
-python3.10 main_train.py --stages sensor 2>&1 | tee "$LOG"
+python3.10 main_train.py --stages surrogate 2>&1 | tee "$LOG"
 
 echo ""
 echo "[launch] ✓ Entrenamiento finalizado."

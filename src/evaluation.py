@@ -29,7 +29,7 @@ class ModelEvaluator:
                 y_pred = output[0]
                 z_list.append(output[1].cpu().numpy())
             elif isinstance(output, dict):
-                y_pred = output.get('moe_output', output.get('shock_prob'))
+                y_pred = output.get('pred', output.get('moe_output', output.get('shock_prob')))
                 if 'latent' in output:
                     z_list.append(output['latent'].cpu().numpy())
             else:

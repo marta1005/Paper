@@ -5,7 +5,7 @@ import logging
 import numpy as np
 from pathlib import Path
 from config import TRAINING_CONFIG, MODEL_DIR, MODEL_CONFIG
-from src.models import ShockAutoencoder, MixtureOfExperts, VirtualShockSensor
+from src.models import ShockAutoencoder, MixtureOfExperts, VirtualShockSensor, AeroSurrogate
 
 logger = logging.getLogger(__name__)
 
@@ -345,3 +345,119 @@ class SensorTrainer:
         p = MODEL_DIR / name
         if p.exists():
             self.sensor.load_state_dict(torch.load(p, map_location=self.device))
+
+
+class SurrogateTrainer:
+    """
+    Trains AeroSurrogate end-to-end with:
+        L = L_aero + λ_shock * L_shock
+
+    L_aero:  MSE on [Cp, Cfx, Cfy, Cfz]  — main task
+    L_shock: BCE on ShockIndicator output  — physics supervision
+             (labels from Cp_real < Cp_crit, only available during training via Y)
+
+    At inference only X is needed; Y is never used.
+    """
+
+    def __init__(self, scaler, device='cpu'):
+        self.device = device
+        cfg = MODEL_CONFIG['surrogate']
+
+        self.model = AeroSurrogate(
+            in_dim=MODEL_CONFIG['autoencoder']['input_dim'],
+            num_experts=cfg['num_experts'],
+            output_dim=cfg['output_dim'],
+            indicator_hidden=cfg.get('indicator_hidden'),
+            expert_hidden=cfg.get('expert_hidden'),
+        ).to(device)
+
+        self.optimizer = optim.Adam(
+            self.model.parameters(),
+            lr=TRAINING_CONFIG['learning_rate'],
+            weight_decay=TRAINING_CONFIG['weight_decay'],
+        )
+
+        self.criterion_mse       = nn.MSELoss()
+        self.criterion_bce_shock = nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor([cfg.get('shock_pos_weight', 5.0)]).to(device)
+        )
+        self.shock_weight = cfg.get('shock_weight', 0.1)
+
+        self._X_mean = torch.tensor(scaler['X_mean'])
+        self._X_std  = torch.tensor(scaler['X_std'])
+        self._Y_mean = torch.tensor(scaler['Y_mean'])
+        self._Y_std  = torch.tensor(scaler['Y_std'])
+
+        self.loss_history  = {'train': [], 'val': []}
+        self.best_val_loss = float('inf')
+
+    def _make_shock_label(self, X_batch, Y_batch):
+        dev     = X_batch.device
+        Cp_real = Y_batch[:, 0] * self._Y_std[0].to(dev) + self._Y_mean[0].to(dev)
+        Cp_crit = X_batch[:, 13] * self._X_std[13].to(dev) + self._X_mean[13].to(dev)
+        return (Cp_real < Cp_crit).float().unsqueeze(1)
+
+    def _loss(self, out, Y_batch, shock_label):
+        return (
+            self.criterion_mse(out['pred'], Y_batch) +
+            self.shock_weight * self.criterion_bce_shock(out['shock_logit'], shock_label)
+        )
+
+    def train_epoch(self, train_loader):
+        self.model.train()
+        total = 0.0
+        for X_batch, Y_batch in train_loader:
+            X_batch     = X_batch.to(self.device)
+            Y_batch     = Y_batch.to(self.device)
+            shock_label = self._make_shock_label(X_batch, Y_batch)
+
+            out  = self.model(X_batch)
+            loss = self._loss(out, Y_batch, shock_label)
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            self.optimizer.step()
+            total += loss.item()
+
+        avg = total / len(train_loader)
+        self.loss_history['train'].append(avg)
+        return avg
+
+    @torch.no_grad()
+    def validate(self, val_loader):
+        self.model.eval()
+        total = 0.0
+        for X_batch, Y_batch in val_loader:
+            X_batch     = X_batch.to(self.device)
+            Y_batch     = Y_batch.to(self.device)
+            shock_label = self._make_shock_label(X_batch, Y_batch)
+            out         = self.model(X_batch)
+            total      += self._loss(out, Y_batch, shock_label).item()
+        avg = total / len(val_loader)
+        self.loss_history['val'].append(avg)
+        if avg < self.best_val_loss:
+            self.best_val_loss = avg
+            self.save_model()
+        return avg
+
+    def train(self, train_loader, val_loader, num_epochs=None):
+        if num_epochs is None:
+            num_epochs = TRAINING_CONFIG['num_epochs']
+        logger.info(f"Surrogate training for {num_epochs} epochs")
+        for epoch in range(num_epochs):
+            tr = self.train_epoch(train_loader)
+            if (epoch + 1) % TRAINING_CONFIG['validate_every'] == 0:
+                vl = self.validate(val_loader)
+                logger.info(f"Epoch {epoch+1}/{num_epochs} | train={tr:.6f} val={vl:.6f} best={self.best_val_loss:.6f}")
+        logger.info("Surrogate training done")
+        self.load_model()
+        return self.model
+
+    def save_model(self, name='surrogate_best.pt'):
+        torch.save(self.model.state_dict(), MODEL_DIR / name)
+
+    def load_model(self, name='surrogate_best.pt'):
+        p = MODEL_DIR / name
+        if p.exists():
+            self.model.load_state_dict(torch.load(p, map_location=self.device))

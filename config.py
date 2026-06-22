@@ -28,7 +28,7 @@ DATA_CONFIG = {
 
 MODEL_CONFIG = {
     'autoencoder': {
-        'input_dim':  14,
+        'input_dim':  16,   # 9 original + 5 physics scalars + 2 geometry (x_norm, span_norm)
         'latent_dim': 32,
         'batch_norm': True,
         'dropout':    0.1,
@@ -41,6 +41,14 @@ MODEL_CONFIG = {
     },
     'sensor': {
         'head_hidden': [64, 32, 16],
+    },
+    'surrogate': {
+        'num_experts':      4,
+        'output_dim':       4,
+        'indicator_hidden': [64, 32, 16],  # ShockIndicator MLP dims
+        'expert_hidden':    [128, 256, 128],  # each expert MLP dims
+        'shock_weight':     0.1,   # λ weighting shock BCE vs aero MSE
+        'shock_pos_weight': 5.0,   # pos_weight for BCE (19% positive shock labels)
     },
 }
 
@@ -60,13 +68,15 @@ PREPROCESSING_CONFIG = {
     'gamma': 1.4,
 }
 
-# Columns of the derived feature array (9 original + 5 derived from X only — no Y)
+# Columns of the derived feature array (9 original + 5 physics scalars + 2 geometry = 16 total)
 DERIVED_FEATURE_INDICES = {
-    'q_dyn':    9,   # 0.5 * Mach^2
-    'Pi_norm': 10,   # Pi / (1 + 0.5*(gamma-1)*Mach^2)
-    'AoA_sin': 11,   # sin(AoA in radians)
-    'L_factor':12,   # Laitone compressibility correction
-    'Cp_crit': 13,   # Critical Cp at sonic condition (function of Mach only)
+    'q_dyn':     9,   # 0.5 * Mach^2
+    'Pi_norm':  10,   # Pi / (1 + 0.5*(gamma-1)*Mach^2)
+    'AoA_sin':  11,   # sin(AoA in radians)
+    'L_factor': 12,   # Laitone compressibility correction
+    'Cp_crit':  13,   # Critical Cp at sonic condition (function of Mach only)
+    'x_norm':   14,   # chord position [0=LE, 1=TE] — requires fitted spatial_stats
+    'span_norm':15,   # span position [0=root, 1=tip] — requires fitted spatial_stats
 }
 
 DEVICE = 'cuda'
