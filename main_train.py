@@ -110,8 +110,12 @@ def main():
     moe_model = None
 
     # ── Autoencoder ────────────────────────────────────────────────────────────
+    # AE is only needed by: moe, sensor.  Surrogate is fully independent.
+    ae_model  = None
+    moe_model = None
+
     if 'ae' in stages:
-        logger.info("\n[AE] Training Autoencoder  (14 -> 128 -> 64 -> 32 -> 64 -> 128 -> 14)")
+        logger.info("\n[AE] Training Autoencoder  (16 -> 128 -> 64 -> 32 -> 64 -> 128 -> 16)")
         ae_trainer = AETrainer(device=device)
         ae_model   = ae_trainer.train(train_loader, val_loader)
         logger.info(f"AE best val loss: {ae_trainer.best_val_loss:.6f}")
@@ -130,12 +134,11 @@ def main():
             if 'z' in ae_eval:
                 n = min(100_000, len(ae_eval['z']))
                 idx = np.random.default_rng(42).choice(len(ae_eval['z']), n, replace=False)
-                # y_true == X (normalised, 14 features) for AE — pass as X_raw for colouring
                 viz.plot_latent_space(ae_eval['z'][idx], X_raw=ae_eval['y_true'][idx],
                                       save_path=OUTPUT_DIR / 'plots' / 'latent_space.png')
         except Exception as e:
             logger.warning(f"AE eval/viz failed (non-critical): {e}")
-    else:
+    elif 'moe' in stages or 'sensor' in stages:
         ae_model = load_ae(device)
 
     # ── Mixture of Experts ─────────────────────────────────────────────────────
@@ -151,7 +154,7 @@ def main():
                             save_path=OUTPUT_DIR / 'plots' / 'moe_losses.png')
         except Exception as e:
             logger.warning(f"MoE viz failed (non-critical): {e}")
-    else:
+    elif 'sensor' in stages:
         moe_model = load_moe(device)
 
     # ── Shock Sensor ───────────────────────────────────────────────────────────
