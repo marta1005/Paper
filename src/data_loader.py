@@ -44,8 +44,15 @@ def load_data_with_sampling(sample_fraction=1.0):
     X_te_path  = data_dir / "X_test_derived.npy"
 
     if X_tr_path.exists():
-        logger.info("Loading preprocessed data (14 features)...")
         X_train_full = np.load(X_tr_path, mmap_mode='r')
+        n_feat = X_train_full.shape[1]
+        if n_feat < 16:
+            logger.warning(
+                f"X_train_derived.npy has {n_feat} features (expected 16). "
+                "Re-run preprocess_data.py to add x_norm and span_norm."
+            )
+        else:
+            logger.info(f"Loading preprocessed data ({n_feat} features)...")
     else:
         logger.warning("X_train_derived.npy not found — run preprocess_data.py first")
         X_train_full = np.load(DATA_CONFIG['X_train_path'], mmap_mode='r')
