@@ -381,7 +381,9 @@ class SurrogateTrainer:
         self.criterion_bce_shock = nn.BCEWithLogitsLoss(
             pos_weight=torch.tensor([cfg.get('shock_pos_weight', 5.0)]).to(device)
         )
-        self.shock_weight = cfg.get('shock_weight', 0.1)
+        self.shock_weight        = cfg.get('shock_weight', 0.1)
+        self.load_balance_weight = cfg.get('load_balance_weight', 0.01)
+        self.num_experts         = cfg.get('num_experts', 4)
 
         self._X_mean = torch.tensor(scaler['X_mean'])
         self._X_std  = torch.tensor(scaler['X_std'])
@@ -397,10 +399,18 @@ class SurrogateTrainer:
         Cp_crit = X_batch[:, 13] * self._X_std[13].to(dev) + self._X_mean[13].to(dev)
         return (Cp_real < Cp_crit).float().unsqueeze(1)
 
+    def _load_balance_loss(self, gate_weights):
+        # Switch-Transformer style: penalises one expert absorbing all traffic.
+        # gate_weights: [B, E] already softmax'd → mean over batch gives E fractions.
+        # Loss = E * sum(mean_i^2); equals 1.0 when perfectly balanced.
+        mean_gates = gate_weights.mean(0)          # [E]
+        return self.num_experts * (mean_gates * mean_gates).sum()
+
     def _loss(self, out, Y_batch, shock_label):
         return (
             self.criterion_mse(out['pred'], Y_batch) +
-            self.shock_weight * self.criterion_bce_shock(out['shock_logit'], shock_label)
+            self.shock_weight * self.criterion_bce_shock(out['shock_logit'], shock_label) +
+            self.load_balance_weight * self._load_balance_loss(out['gate_weights'])
         )
 
     def train_epoch(self, train_loader):

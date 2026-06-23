@@ -188,15 +188,20 @@ def run_pysr(X, y, feature_names, n_iter=50):
         logger.error("PySR not installed: pip install pysr")
         return None
 
+    logger.info(f"PySR input: {len(X):,} samples  ({int((y>0.5).sum()):,} shock  {int((y<=0.5).sum()):,} no-shock)")
+
     model = PySRRegressor(
         niterations=n_iter,
-        binary_operators=['+', '-', '*', '/', '^'],
-        unary_operators=['exp', 'log', 'abs', 'sqrt', 'tanh', 'sigmoid'],
+        binary_operators=['+', '-', '*', '/'],
+        unary_operators=['exp', 'log', 'abs', 'sqrt', 'tanh'],
+        constraints={'^': (-1, 1)},
         maxsize=25,
         populations=20,
         population_size=50,
         model_selection='best',
         parsimony=0.002,
+        batching=True,
+        batch_size=5000,
         random_state=42,
         verbosity=1,
     )
@@ -204,7 +209,7 @@ def run_pysr(X, y, feature_names, n_iter=50):
     return model
 
 
-def run_decision_tree(X, y, feature_names, max_depth=5):
+def run_decision_tree(X, y, feature_names, max_depth=7):
     from sklearn.tree import DecisionTreeClassifier, export_text
     y_bin = (y > 0.5).astype(int)
     clf   = DecisionTreeClassifier(
@@ -232,11 +237,13 @@ def calibrate_with_isotonic(scores, labels):
 
 
 def calibrate_decision_tree(clf, X, y):
-    """Platt scaling calibration for the decision tree."""
-    from sklearn.calibration import CalibratedClassifierCV
-    cal = CalibratedClassifierCV(clf, method='isotonic', cv='prefit')
-    cal.fit(X, (y > 0.5).astype(int))
-    return cal
+    """Isotonic calibration on the decision tree's probability output."""
+    from sklearn.isotonic import IsotonicRegression
+    proba = clf.predict_proba(X)[:, 1]
+    iso   = IsotonicRegression(out_of_bounds='clip')
+    iso.fit(proba, (y > 0.5).astype(int))
+    logger.info("Isotonic calibration fitted on decision tree probabilities.")
+    return iso
 
 
 def evaluate_labels(y_pred_binary, y_true, tag=''):
@@ -357,7 +364,10 @@ def main():
                 X_raw, Y_raw, k=args.knn_k, margin=args.margin
             )
         else:
-            y_label, _, _ = make_physics_labels(X_raw, Y_raw, margin=args.margin)
+            shock, _, intensity = make_physics_labels(X_raw, Y_raw, margin=args.margin)
+            y_label = intensity if args.target == 'intensity' else shock
+            if args.target == 'intensity':
+                logger.info(f"Target: intensity (smooth)  mean={y_label.mean():.4f}  max={y_label.max():.4f}")
 
         X_sr = extract_sr_features(X_raw)
 
@@ -387,8 +397,8 @@ def main():
         evaluate_labels(y_pred_raw, (y_label > 0.5).astype(int), tag='Decision Tree (uncalibrated)')
 
         # Calibrate
-        cal_obj = calibrate_decision_tree(clf, X_sr, y_label)
-        y_prob_cal = cal_obj.predict_proba(X_sr)[:, 1]
+        cal_obj    = calibrate_decision_tree(clf, X_sr, y_label)
+        y_prob_cal = cal_obj.predict(clf.predict_proba(X_sr)[:, 1])
         logger.info(f"Calibrated probability range: [{y_prob_cal.min():.3f}, {y_prob_cal.max():.3f}]")
 
         logger.info(f"\n{'='*60}\nDecision Tree rules\n{'='*60}\n{rules}")
