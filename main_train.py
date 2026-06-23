@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """
-Training pipeline: AE -> MoE -> Sensor
+Training pipeline.
+
+Stages:
+  surrogate   — Shock-Gated Surrogate (ShockIndicator + MoE, no AE needed)
+  ae          — Autoencoder
+  moe         — Mixture of Experts (requires ae checkpoint)
+  sensor      — Virtual Shock Sensor (requires ae + moe checkpoints)
 
 Usage:
-    python main_train.py                        # full pipeline
-    python main_train.py --stages ae            # only autoencoder
-    python main_train.py --stages ae moe        # AE + MoE
-    python main_train.py --stages moe           # MoE only (loads saved AE)
-    python main_train.py --stages sensor        # Sensor only (loads saved AE + MoE)
-    python main_train.py --stages moe sensor    # MoE + Sensor (loads saved AE)
+    python main_train.py --stages surrogate          # main model (recommended)
+    python main_train.py --stages ae moe sensor      # legacy AE pipeline
+    python main_train.py --stages ae                 # only autoencoder
+    python main_train.py --stages moe                # MoE only (loads saved AE)
+    python main_train.py --stages sensor             # Sensor only (loads saved AE + MoE)
 
 Env vars:
     PAPER_TRAIN_FRACTION   fraction of train data to use  (default 0.05)
-    PAPER_EPOCHS           epochs for AE and Sensor       (default 20)
+    PAPER_EPOCHS           epochs per stage               (default 20)
     PAPER_BATCH_SIZE       batch size                     (default 256)
     PAPER_NUM_WORKERS      dataloader workers             (default 0)
 """
@@ -111,7 +116,7 @@ def main():
 
     # ── Autoencoder ────────────────────────────────────────────────────────────
     if 'ae' in stages:
-        logger.info("\n[AE] Training Autoencoder  (14 -> 128 -> 64 -> 32 -> 64 -> 128 -> 14)")
+        logger.info("\n[AE] Training Autoencoder  (16 -> 128 -> 64 -> 32 -> 64 -> 128 -> 16)")
         ae_trainer = AETrainer(device=device)
         ae_model   = ae_trainer.train(train_loader, val_loader)
         logger.info(f"AE best val loss: {ae_trainer.best_val_loss:.6f}")
@@ -130,12 +135,11 @@ def main():
             if 'z' in ae_eval:
                 n = min(100_000, len(ae_eval['z']))
                 idx = np.random.default_rng(42).choice(len(ae_eval['z']), n, replace=False)
-                # y_true == X (normalised, 14 features) for AE — pass as X_raw for colouring
                 viz.plot_latent_space(ae_eval['z'][idx], X_raw=ae_eval['y_true'][idx],
                                       save_path=OUTPUT_DIR / 'plots' / 'latent_space.png')
         except Exception as e:
             logger.warning(f"AE eval/viz failed (non-critical): {e}")
-    else:
+    elif 'moe' in stages or 'sensor' in stages:
         ae_model = load_ae(device)
 
     # ── Mixture of Experts ─────────────────────────────────────────────────────
@@ -151,7 +155,7 @@ def main():
                             save_path=OUTPUT_DIR / 'plots' / 'moe_losses.png')
         except Exception as e:
             logger.warning(f"MoE viz failed (non-critical): {e}")
-    else:
+    elif 'sensor' in stages:
         moe_model = load_moe(device)
 
     # ── Shock Sensor ───────────────────────────────────────────────────────────

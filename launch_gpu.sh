@@ -50,14 +50,22 @@ fi
 # ---------- lanzar ----------
 mkdir -p "$PROJECT_DIR/outputs"
 echo "[launch] Log → $LOG"
-echo "[launch] Iniciando pipeline..."
 
 cd "$PROJECT_DIR"
-python3.10 main_train.py --stages surrogate 2>&1 | tee "$LOG"
+
+echo "[launch] [1/3] Preprocesando datos (9 -> 16 features)..."
+python3.10 preprocess_data.py 2>&1 | tee -a "$LOG"
+
+echo "[launch] [2/3] Entrenando Surrogate (ShockIndicator + MoE)..."
+python3.10 main_train.py --stages surrogate 2>&1 | tee -a "$LOG"
+
+echo "[launch] [3/3] Sensor simbólico (PySR directo sobre labels CFD)..."
+python3.10 symbolic_regression.py --samples 50000 2>&1 | tee -a "$LOG"
 
 echo ""
-echo "[launch] ✓ Entrenamiento finalizado."
-echo "[launch]   Modelos:    outputs/models/"
-echo "[launch]   Resultados: outputs/results/"
-echo "[launch]   Plots:      outputs/plots/"
-echo "[launch]   Log:        $LOG"
+echo "[launch] ✓ Pipeline finalizado."
+echo "[launch]   Modelos:           outputs/models/"
+echo "[launch]   Sensor simbólico:  outputs/models/shock_sensor_symbolic_*.pkl"
+echo "[launch]   Resultados SR:     outputs/results/symbolic_regression_*.txt"
+echo "[launch]   Plots:             outputs/plots/"
+echo "[launch]   Log:               $LOG"
