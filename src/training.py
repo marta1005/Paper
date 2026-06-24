@@ -359,7 +359,7 @@ class SurrogateTrainer:
     At inference only X is needed; Y is never used.
     """
 
-    def __init__(self, scaler, device='cpu'):
+    def __init__(self, scaler, device='cpu', symbolic_sensor_path=None, save_name='surrogate_best.pt'):
         self.device = device
         cfg = MODEL_CONFIG['surrogate']
 
@@ -371,8 +371,20 @@ class SurrogateTrainer:
             expert_hidden=cfg.get('expert_hidden'),
         ).to(device)
 
+        # Symbolic gate mode: freeze ShockIndicator, train MoE only
+        self.symbolic_sensor = None
+        if symbolic_sensor_path:
+            import pickle
+            with open(symbolic_sensor_path, 'rb') as f:
+                self.symbolic_sensor = pickle.load(f)
+            if self.symbolic_sensor.get('clf') is None:
+                raise ValueError("Symbolic sensor pkl missing 'clf' — re-run symbolic_regression.py --fallback")
+            for p in self.model.shock_indicator.parameters():
+                p.requires_grad_(False)
+            logger.info(f"Symbolic gate loaded from {symbolic_sensor_path} — ShockIndicator frozen")
+
         self.optimizer = optim.Adam(
-            self.model.parameters(),
+            filter(lambda p: p.requires_grad, self.model.parameters()),
             lr=TRAINING_CONFIG['learning_rate'],
             weight_decay=TRAINING_CONFIG['weight_decay'],
         )
@@ -385,11 +397,12 @@ class SurrogateTrainer:
         self.load_balance_weight = cfg.get('load_balance_weight', 0.01)
         self.num_experts         = cfg.get('num_experts', 4)
 
-        self._X_mean = torch.tensor(scaler['X_mean'])
-        self._X_std  = torch.tensor(scaler['X_std'])
-        self._Y_mean = torch.tensor(scaler['Y_mean'])
-        self._Y_std  = torch.tensor(scaler['Y_std'])
+        self._X_mean = torch.tensor(scaler['X_mean'], dtype=torch.float32)
+        self._X_std  = torch.tensor(scaler['X_std'],  dtype=torch.float32)
+        self._Y_mean = torch.tensor(scaler['Y_mean'], dtype=torch.float32)
+        self._Y_std  = torch.tensor(scaler['Y_std'],  dtype=torch.float32)
 
+        self.save_name     = save_name
         self.loss_history  = {'train': [], 'val': []}
         self.best_val_loss = float('inf')
 
@@ -413,16 +426,45 @@ class SurrogateTrainer:
             self.load_balance_weight * self._load_balance_loss(out['gate_weights'])
         )
 
+    def _loss_symbolic(self, pred, gates, Y_batch):
+        """Loss when ShockIndicator is frozen — no BCE, only MSE + load balance."""
+        return (
+            self.criterion_mse(pred, Y_batch) +
+            self.load_balance_weight * self._load_balance_loss(gates)
+        )
+
+    def _symbolic_shock_prob(self, X_batch):
+        """Compute shock probability from the frozen symbolic DT sensor."""
+        import numpy as np
+        dev   = X_batch.device
+        X_raw = (X_batch.cpu() * self._X_std + self._X_mean).numpy()
+        sr_idx = self.symbolic_sensor['sr_idx']
+        proba  = self.symbolic_sensor['clf'].predict_proba(X_raw[:, sr_idx])[:, 1]
+        sp_cal = self.symbolic_sensor['calibrator'].predict(proba).astype(np.float32)
+        return torch.from_numpy(sp_cal[:, None]).to(dev)
+
+    def _forward(self, X_batch):
+        """Forward pass: use symbolic gate if loaded, else neural ShockIndicator."""
+        if self.symbolic_sensor is not None:
+            shock_prob = self._symbolic_shock_prob(X_batch)
+            pred, gates = self.model.moe(X_batch, shock_prob)
+            return {'pred': pred, 'shock_prob': shock_prob, 'gate_weights': gates}
+        return self.model(X_batch)
+
     def train_epoch(self, train_loader):
         self.model.train()
         total = 0.0
         for X_batch, Y_batch in train_loader:
             X_batch     = X_batch.to(self.device)
             Y_batch     = Y_batch.to(self.device)
-            shock_label = self._make_shock_label(X_batch, Y_batch)
 
-            out  = self.model(X_batch)
-            loss = self._loss(out, Y_batch, shock_label)
+            out  = self._forward(X_batch)
+
+            if self.symbolic_sensor is not None:
+                loss = self._loss_symbolic(out['pred'], out['gate_weights'], Y_batch)
+            else:
+                shock_label = self._make_shock_label(X_batch, Y_batch)
+                loss = self._loss(out, Y_batch, shock_label)
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -439,16 +481,19 @@ class SurrogateTrainer:
         self.model.eval()
         total = 0.0
         for X_batch, Y_batch in val_loader:
-            X_batch     = X_batch.to(self.device)
-            Y_batch     = Y_batch.to(self.device)
-            shock_label = self._make_shock_label(X_batch, Y_batch)
-            out         = self.model(X_batch)
-            total      += self._loss(out, Y_batch, shock_label).item()
+            X_batch = X_batch.to(self.device)
+            Y_batch = Y_batch.to(self.device)
+            out     = self._forward(X_batch)
+            if self.symbolic_sensor is not None:
+                total += self._loss_symbolic(out['pred'], out['gate_weights'], Y_batch).item()
+            else:
+                shock_label = self._make_shock_label(X_batch, Y_batch)
+                total += self._loss(out, Y_batch, shock_label).item()
         avg = total / len(val_loader)
         self.loss_history['val'].append(avg)
         if avg < self.best_val_loss:
             self.best_val_loss = avg
-            self.save_model()
+            self.save_model(self.save_name)
         return avg
 
     def train(self, train_loader, val_loader, num_epochs=None):

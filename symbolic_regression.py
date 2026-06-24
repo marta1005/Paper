@@ -343,6 +343,8 @@ def main():
                         help='Cp margin below Cp_crit for shock label (default 0 = strict).')
     parser.add_argument('--knn-k',      type=int, default=10,
                         help='K neighbours for K-NN gradient filter.')
+    parser.add_argument('--knn-percentile', type=int, default=30,
+                        help='Gradient percentile threshold (default 30 = keep top 70%% of shock gradients).')
     parser.add_argument('--target',     choices=['shock', 'intensity'], default='shock',
                         help='Target variable (intensity only in distill mode).')
     parser.add_argument('--device',     default='cpu')
@@ -361,7 +363,8 @@ def main():
         if args.knn_labels:
             logger.info("[K-NN] Computing K-NN gradient filter for improved labels...")
             y_label, grad_mag = make_knn_labels(
-                X_raw, Y_raw, k=args.knn_k, margin=args.margin
+                X_raw, Y_raw, k=args.knn_k,
+                gradient_percentile=args.knn_percentile, margin=args.margin
             )
         else:
             shock, _, intensity = make_physics_labels(X_raw, Y_raw, margin=args.margin)
@@ -387,6 +390,7 @@ def main():
     # ── Symbolic regression ──────────────────────────────────────────────────
     eq_str  = ""
     cal_obj = None
+    clf     = None
 
     if args.fallback:
         logger.info("\n[Decision Tree] Training symbolic classifier...")
@@ -449,9 +453,14 @@ def main():
         import pickle
         cal_path = MODEL_DIR / f'shock_sensor_symbolic_{tag}.pkl'
         with open(str(cal_path), 'wb') as f:
-            pickle.dump({'calibrator': cal_obj, 'sr_features': SR_FEATURES, 'sr_idx': SR_IDX}, f)
+            pickle.dump({
+                'clf':         clf,
+                'calibrator':  cal_obj,
+                'sr_features': SR_FEATURES,
+                'sr_idx':      SR_IDX,
+            }, f)
         logger.info(f"Calibrated sensor saved to {cal_path}")
-        logger.info("Load with: pickle.load(open(path,'rb'))['calibrator'].predict(X[:,SR_IDX])")
+        logger.info("Usage: obj['clf'].predict_proba(X[:,SR_IDX])[:,1] → obj['calibrator'].predict(...)")
 
 
 if __name__ == '__main__':
