@@ -93,6 +93,11 @@ def main():
         default=['ae', 'moe', 'sensor'],
         help='Stages to run (default: ae moe sensor). Use surrogate for the new shock-gated model.'
     )
+    parser.add_argument(
+        '--symbolic-gate', default=None, metavar='PKL',
+        help='Path to symbolic sensor pkl. When set with --stages surrogate, '
+             'freezes ShockIndicator and trains MoE with symbolic gates.'
+    )
     args = parser.parse_args()
     stages = set(args.stages)
 
@@ -179,8 +184,19 @@ def main():
 
     # ── Shock-Gated Surrogate ──────────────────────────────────────────────────
     if 'surrogate' in stages:
-        logger.info("\n[Surrogate] Training Shock-Gated Surrogate  (ShockIndicator + MoE, no AE)")
-        surrogate_trainer = SurrogateTrainer(scaler=scaler, device=device)
+        symbolic_gate = args.symbolic_gate
+        if symbolic_gate:
+            logger.info(f"\n[Surrogate] Training MoE with symbolic gate: {symbolic_gate}")
+            model_name = 'surrogate_symbolic'
+        else:
+            logger.info("\n[Surrogate] Training Shock-Gated Surrogate  (ShockIndicator + MoE, no AE)")
+            model_name = 'surrogate'
+
+        surrogate_trainer = SurrogateTrainer(
+            scaler=scaler, device=device,
+            symbolic_sensor_path=symbolic_gate,
+            save_name=f'{model_name}_best.pt',
+        )
         surrogate_trainer.train(train_loader, val_loader)
         logger.info(f"Surrogate best val loss: {surrogate_trainer.best_val_loss:.6f}")
 
@@ -188,14 +204,14 @@ def main():
             viz = VisualizationTools()
             viz.plot_losses(surrogate_trainer.loss_history['train'],
                             surrogate_trainer.loss_history['val'],
-                            save_path=OUTPUT_DIR / 'plots' / 'surrogate_losses.png')
+                            save_path=OUTPUT_DIR / 'plots' / f'{model_name}_losses.png')
             surr_eval_obj = ModelEvaluator(surrogate_trainer.model, device=device, is_autoencoder=False)
             surr_eval     = surr_eval_obj.evaluate(test_loader, return_predictions=True)
             surr_eval_obj.log_metrics(surr_eval['metrics'])
-            save_evaluation_report(surr_eval['metrics'], surr_eval, model_name='surrogate')
+            save_evaluation_report(surr_eval['metrics'], surr_eval, model_name=model_name)
             if 'y_true' in surr_eval and 'y_pred' in surr_eval:
                 viz.plot_predictions_vs_truth(surr_eval['y_true'], surr_eval['y_pred'],
-                                              save_path=OUTPUT_DIR / 'plots' / 'surrogate_predictions.png')
+                                              save_path=OUTPUT_DIR / 'plots' / f'{model_name}_predictions.png')
         except Exception as e:
             logger.warning(f"Surrogate eval/viz failed (non-critical): {e}")
 

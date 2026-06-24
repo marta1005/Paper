@@ -129,11 +129,27 @@ def load_test_data(scaler, fraction=1.0):
 
 
 @torch.no_grad()
-def predict(model, X_norm, device, batch_size=4096):
+def predict(model, X_norm, device, batch_size=4096, symbolic_sensor=None, X_phys=None):
+    """Run AeroSurrogate forward. If symbolic_sensor is given, override shock_prob
+    with the symbolic tree output before passing to the MoE."""
     preds, shock_probs, gate_weights = [], [], []
     for i in range(0, len(X_norm), batch_size):
         xb  = torch.from_numpy(X_norm[i:i + batch_size]).float().to(device)
-        out = model(xb)
+
+        if symbolic_sensor is not None:
+            # Get shock_prob from symbolic sensor instead of neural ShockIndicator
+            sr_idx = symbolic_sensor['sr_idx']
+            X_raw_b = X_phys[i:i + batch_size][:, sr_idx]
+            proba   = symbolic_sensor['clf'].predict_proba(X_raw_b)[:, 1]
+            sp_cal  = symbolic_sensor['calibrator'].predict(proba).astype(np.float32)
+            sp_t    = torch.from_numpy(sp_cal[:, None]).to(device)
+
+            # Run MoE directly with symbolic shock_prob (bypass ShockIndicator)
+            pred, gates = model.moe(xb, sp_t)
+            out = {'pred': pred, 'shock_prob': sp_t, 'gate_weights': gates}
+        else:
+            out = model(xb)
+
         preds.append(out['pred'].cpu().numpy())
         shock_probs.append(out['shock_prob'].cpu().numpy())
         gate_weights.append(out['gate_weights'].cpu().numpy())
@@ -156,6 +172,12 @@ def plot_condition(fig, n_rows, row, X_phys, Cp_cfd, Cp_pred, cond, cond_idx,
 
     cp_min, cp_max = cp_lim if cp_lim is not None else (
         float(np.percentile(Cp_cfd, 2)), float(np.percentile(Cp_cfd, 98)))
+
+    # Error as % of the global Cp range
+    cp_range = cp_max - cp_min
+    err_pct = 100.0 * err / cp_range
+    err_pct_abs = round(float(np.percentile(np.abs(err_pct), 98)), 1)
+    err_range = f'Error [{-err_pct_abs:.1f}%, {err_pct_abs:.1f}%]'
     mae_str = f'MAE={mae:.4f}'
 
     ax1 = fig.add_subplot(n_rows, 3, row * 3 + 1)
@@ -164,21 +186,25 @@ def plot_condition(fig, n_rows, row, X_phys, Cp_cfd, Cp_pred, cond, cond_idx,
 
     kw = dict(s=1, alpha=0.9, rasterized=True, linewidths=0)
 
-    sc1 = ax1.scatter(x, y, c=Cp_cfd,  cmap='RdBu_r', vmin=cp_min, vmax=cp_max, **kw)
-    sc2 = ax2.scatter(x, y, c=Cp_pred, cmap='RdBu_r', vmin=cp_min, vmax=cp_max, **kw)
-    sc3 = ax3.scatter(x, y, c=err,     cmap='RdBu_r', vmin=cp_min, vmax=cp_max, **kw)
+    # Pastel diverging colormap for error (muted blue–white–red)
+    pastel_err = matplotlib.colors.LinearSegmentedColormap.from_list(
+        'pastel_err', ['#3a78b5', 'white', '#c94040'])
+
+    sc1 = ax1.scatter(x, y, c=Cp_cfd,    cmap='jet',      vmin=cp_min,      vmax=cp_max,      **kw)
+    sc2 = ax2.scatter(x, y, c=Cp_pred,   cmap='jet',      vmin=cp_min,      vmax=cp_max,      **kw)
+    sc3 = ax3.scatter(x, y, c=err_pct,   cmap=pastel_err, vmin=-err_pct_abs, vmax=err_pct_abs, **kw)
 
     ax1.set_title(r'Truth $C_p$', fontsize=9)
     ax2.set_title(
         f'cond {cond_idx} | M={mach:.2f} | AoA={aoa:.1f} | Pi={pi:.1f} | {mae_str}',
         fontsize=8,
     )
-    ax3.set_title(r'Error $C_p$ (same scale)', fontsize=9)
+    ax3.set_title(err_range, fontsize=9)
 
     for ax, sc, label in [
         (ax1, sc1, r'Truth $C_p$'),
         (ax2, sc2, r'Predicted $C_p$'),
-        (ax3, sc3, r'Error $C_p$'),
+        (ax3, sc3, 'Error (% of $C_p$ range)'),
     ]:
         plt.colorbar(sc, ax=ax, orientation='horizontal', pad=0.03, fraction=0.046, label=label)
         ax.set_xticks([]); ax.set_yticks([])
@@ -294,6 +320,10 @@ def main():
                         help='Skip conditions with fewer points (default 5000)')
     parser.add_argument('--expert',     action='store_true',
                         help='Plot expert specialisation diagnostics instead of Cp comparison')
+    parser.add_argument('--symbolic',   action='store_true',
+                        help='Replace neural ShockIndicator with symbolic sensor (DT) for MoE gating')
+    parser.add_argument('--sensor-pkl', default=None,
+                        help='Path to symbolic sensor pkl (default: outputs/models/shock_sensor_symbolic_physics_knn.pkl)')
     args = parser.parse_args()
 
     device = torch.device('cpu')
@@ -302,6 +332,17 @@ def main():
     if not scaler_path.exists():
         raise FileNotFoundError("scaler.npy not found — copy it from the server first")
     scaler = np.load(str(scaler_path), allow_pickle=True).item()
+
+    # Load symbolic sensor if requested
+    symbolic_sensor = None
+    if args.symbolic:
+        import pickle
+        pkl_path = args.sensor_pkl or str(MODEL_DIR / 'shock_sensor_symbolic_physics_knn.pkl')
+        with open(pkl_path, 'rb') as f:
+            symbolic_sensor = pickle.load(f)
+        if symbolic_sensor.get('clf') is None:
+            raise ValueError("Symbolic sensor pkl missing 'clf' — re-run symbolic_regression.py")
+        print(f"Symbolic sensor loaded: {symbolic_sensor['sr_features']}")
 
     print(f"Loading test data (fraction={args.fraction})...")
     data = load_test_data(scaler, fraction=args.fraction)
@@ -350,7 +391,11 @@ def main():
     results = []
     for cond in selected:
         d = data[cond]
-        pred_norm, shock_prob, gate_w = predict(model, d['X_norm'], device)
+        pred_norm, shock_prob, gate_w = predict(
+            model, d['X_norm'], device,
+            symbolic_sensor=symbolic_sensor,
+            X_phys=d['X_phys'],
+        )
         Cp_pred = pred_norm[:, 0] * Y_std[0] + Y_mean[0]
         results.append((d['X_phys'], d['Y_phys'][:, 0], Cp_pred, shock_prob, gate_w))
 
@@ -373,13 +418,15 @@ def main():
         r2  = float(1 - np.var(Cp_cfd - Cp_pred) / np.var(Cp_cfd))
         print(f"  [{idx}] Mach={cond[0]:.2f}  AoA={cond[1]:.1f}°  Pi={cond[2]:.1f}  R²={r2:.4f}  MAE={mae:.4f}")
 
+    sensor_tag = '_symbolic' if args.symbolic else '_neural'
     fig.suptitle(
-        'Full-aircraft upper shock-symbolic inference | multiple test conditions',
+        f'Full-aircraft Cp inference | {args.model} | sensor={sensor_tag.strip("_")}',
         fontsize=13, fontweight='bold', y=1.002,
     )
     plt.tight_layout()
 
-    out = PLOT_DIR / f'cp_comparison_{args.model}_2d.png'
+    idx_str = '_'.join(str(i) for i in indices)
+    out = PLOT_DIR / f'cp_comparison_{args.model}{sensor_tag}_cond{idx_str}.png'
     fig.savefig(out, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f"\nSaved → {out}")

@@ -53,19 +53,28 @@ echo "[launch] Log → $LOG"
 
 cd "$PROJECT_DIR"
 
-echo "[launch] [1/3] Preprocesando datos (9 -> 16 features)..."
+echo "[launch] [1/4] Preprocesando datos (9 -> 16 features)..."
 python3.10 preprocess_data.py 2>&1 | tee -a "$LOG"
 
-echo "[launch] [2/3] Entrenando Surrogate (ShockIndicator + MoE)..."
+echo "[launch] [2/4] Entrenando Surrogate (ShockIndicator + MoE, neural gate)..."
 python3.10 main_train.py --stages surrogate 2>&1 | tee -a "$LOG"
 
-echo "[launch] [3/3] Sensor simbólico (PySR directo sobre labels CFD)..."
-python3.10 symbolic_regression.py --samples 50000 2>&1 | tee -a "$LOG"
+echo "[launch] [3/4] Sensor simbólico con K-NN gradient labels (Decision Tree)..."
+python3.10 symbolic_regression.py \
+    --mode physics --fallback \
+    --knn-labels --knn-k 50 --knn-percentile 85 \
+    --samples 200000 2>&1 | tee -a "$LOG"
+
+SENSOR_PKL="$PROJECT_DIR/outputs/models/shock_sensor_symbolic_physics_knn.pkl"
+echo "[launch] [4/4] Reentrenando MoE con gate simbólico (ShockIndicator congelado)..."
+python3.10 main_train.py --stages surrogate \
+    --symbolic-gate "$SENSOR_PKL" 2>&1 | tee -a "$LOG"
 
 echo ""
 echo "[launch] ✓ Pipeline finalizado."
-echo "[launch]   Modelos:           outputs/models/"
-echo "[launch]   Sensor simbólico:  outputs/models/shock_sensor_symbolic_*.pkl"
-echo "[launch]   Resultados SR:     outputs/results/symbolic_regression_*.txt"
-echo "[launch]   Plots:             outputs/plots/"
-echo "[launch]   Log:               $LOG"
+echo "[launch]   Modelos:              outputs/models/surrogate_best.pt (neural gate)"
+echo "[launch]                         outputs/models/surrogate_symbolic_best.pt (symbolic gate)"
+echo "[launch]   Sensor simbólico:     $SENSOR_PKL"
+echo "[launch]   Resultados SR:        outputs/results/symbolic_regression_*.txt"
+echo "[launch]   Plots:                outputs/plots/"
+echo "[launch]   Log:                  $LOG"
