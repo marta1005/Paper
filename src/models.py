@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import logging
 
 logger = logging.getLogger(__name__)
@@ -138,19 +139,23 @@ class ShockGatedMoE(nn.Module):
     Each expert specialises in one flow regime; the Cp discontinuity at the
     shock emerges from the jump between expert predictions rather than from
     a smooth network trying to approximate a discontinuous function.
+
+    Training:  Gumbel-Softmax gate (differentiable; temperature τ annealed 1.0→0.1).
+    Inference: hard argmax — each point commits to exactly one expert,
+               producing a sharp discontinuity at the shock front instead of a blend.
     """
     def __init__(self, in_dim=14, num_experts=4, expert_hidden=None, output_dim=4):
         super().__init__()
         if expert_hidden is None:
             expert_hidden = [128, 256, 128]
 
-        # Gate: [shock_prob(1) | X(14)] → num_experts weights
+        # Gate: [shock_prob(1) | X(14)] → num_experts logits (Softmax applied via Gumbel)
         self.gate = nn.Sequential(
             nn.Linear(in_dim + 1, 64), nn.ReLU(),
             nn.Linear(64, 32),         nn.ReLU(),
             nn.Linear(32, num_experts),
-            nn.Softmax(dim=-1),
         )
+        self.register_buffer('tau', torch.ones(1))  # annealed externally by trainer
 
         # Experts: full X → [Cp, Cfx, Cfy, Cfz]
         self.experts = nn.ModuleList([
@@ -159,7 +164,14 @@ class ShockGatedMoE(nn.Module):
         ])
 
     def forward(self, x, shock_prob):
-        gates        = self.gate(torch.cat([x, shock_prob], dim=1))
+        gate_logits = self.gate(torch.cat([x, shock_prob], dim=1))
+        if self.training:
+            # Differentiable soft routing with annealed temperature
+            gates = F.gumbel_softmax(gate_logits, tau=float(self.tau), hard=False, dim=-1)
+        else:
+            # Hard argmax: each point routes to exactly one expert — no blending
+            idx   = gate_logits.argmax(-1)
+            gates = torch.zeros_like(gate_logits).scatter_(1, idx.unsqueeze(1), 1.0)
         expert_stack = torch.stack([e(x) for e in self.experts], dim=1)  # [B, E, 4]
         output       = (gates.unsqueeze(-1) * expert_stack).sum(dim=1)
         return output, gates

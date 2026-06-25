@@ -396,6 +396,9 @@ class SurrogateTrainer:
         self.shock_weight        = cfg.get('shock_weight', 0.1)
         self.load_balance_weight = cfg.get('load_balance_weight', 0.01)
         self.num_experts         = cfg.get('num_experts', 4)
+        self.shock_mse_weight    = cfg.get('shock_mse_weight', 10.0)
+        self.tau_start           = cfg.get('gumbel_tau_start', 1.0)
+        self.tau_end             = cfg.get('gumbel_tau_end', 0.1)
 
         self._X_mean = torch.tensor(scaler['X_mean'], dtype=torch.float32)
         self._X_std  = torch.tensor(scaler['X_std'],  dtype=torch.float32)
@@ -419,19 +422,31 @@ class SurrogateTrainer:
         mean_gates = gate_weights.mean(0)          # [E]
         return self.num_experts * (mean_gates * mean_gates).sum()
 
+    def _update_tau(self, epoch, num_epochs):
+        """Exponentially anneal Gumbel-Softmax gate temperature from tau_start → tau_end."""
+        progress = epoch / max(num_epochs - 1, 1)
+        tau = self.tau_start * (self.tau_end / self.tau_start) ** progress
+        self.model.moe.tau.fill_(tau)
+        return tau
+
     def _loss(self, out, Y_batch, shock_label):
+        # Shock-weighted MSE: errors at the shock front are penalised shock_mse_weight× more
+        w            = 1.0 + self.shock_mse_weight * shock_label   # [B, 1]
+        mse_weighted = (w * (out['pred'] - Y_batch) ** 2).mean()
         return (
-            self.criterion_mse(out['pred'], Y_batch) +
+            mse_weighted +
             self.shock_weight * self.criterion_bce_shock(out['shock_logit'], shock_label) +
             self.load_balance_weight * self._load_balance_loss(out['gate_weights'])
         )
 
-    def _loss_symbolic(self, pred, gates, Y_batch):
-        """Loss when ShockIndicator is frozen — no BCE, only MSE + load balance."""
-        return (
-            self.criterion_mse(pred, Y_batch) +
-            self.load_balance_weight * self._load_balance_loss(gates)
-        )
+    def _loss_symbolic(self, pred, gates, Y_batch, shock_label=None):
+        """Loss when ShockIndicator is frozen — no BCE, only weighted MSE + load balance."""
+        if shock_label is not None:
+            w   = 1.0 + self.shock_mse_weight * shock_label
+            mse = (w * (pred - Y_batch) ** 2).mean()
+        else:
+            mse = self.criterion_mse(pred, Y_batch)
+        return mse + self.load_balance_weight * self._load_balance_loss(gates)
 
     def _symbolic_shock_prob(self, X_batch):
         """Compute shock probability from the frozen symbolic DT sensor."""
@@ -457,13 +472,13 @@ class SurrogateTrainer:
         for X_batch, Y_batch in train_loader:
             X_batch     = X_batch.to(self.device)
             Y_batch     = Y_batch.to(self.device)
+            shock_label = self._make_shock_label(X_batch, Y_batch)
 
-            out  = self._forward(X_batch)
+            out = self._forward(X_batch)
 
             if self.symbolic_sensor is not None:
-                loss = self._loss_symbolic(out['pred'], out['gate_weights'], Y_batch)
+                loss = self._loss_symbolic(out['pred'], out['gate_weights'], Y_batch, shock_label)
             else:
-                shock_label = self._make_shock_label(X_batch, Y_batch)
                 loss = self._loss(out, Y_batch, shock_label)
 
             self.optimizer.zero_grad()
@@ -484,11 +499,9 @@ class SurrogateTrainer:
             X_batch = X_batch.to(self.device)
             Y_batch = Y_batch.to(self.device)
             out     = self._forward(X_batch)
-            if self.symbolic_sensor is not None:
-                total += self._loss_symbolic(out['pred'], out['gate_weights'], Y_batch).item()
-            else:
-                shock_label = self._make_shock_label(X_batch, Y_batch)
-                total += self._loss(out, Y_batch, shock_label).item()
+            # Plain MSE for checkpoint metric — tracks Cp quality directly,
+            # independent of shock weight or load balance
+            total += self.criterion_mse(out['pred'], Y_batch).item()
         avg = total / len(val_loader)
         self.loss_history['val'].append(avg)
         if avg < self.best_val_loss:
@@ -499,12 +512,20 @@ class SurrogateTrainer:
     def train(self, train_loader, val_loader, num_epochs=None):
         if num_epochs is None:
             num_epochs = TRAINING_CONFIG['num_epochs']
-        logger.info(f"Surrogate training for {num_epochs} epochs")
+        logger.info(
+            f"Surrogate training for {num_epochs} epochs | "
+            f"τ: {self.tau_start:.1f}→{self.tau_end:.2f} | "
+            f"shock_mse_w={self.shock_mse_weight}"
+        )
         for epoch in range(num_epochs):
-            tr = self.train_epoch(train_loader)
+            tau = self._update_tau(epoch, num_epochs)
+            tr  = self.train_epoch(train_loader)
             if (epoch + 1) % TRAINING_CONFIG['validate_every'] == 0:
                 vl = self.validate(val_loader)
-                logger.info(f"Epoch {epoch+1}/{num_epochs} | train={tr:.6f} val={vl:.6f} best={self.best_val_loss:.6f}")
+                logger.info(
+                    f"Epoch {epoch+1}/{num_epochs} | τ={tau:.3f} | "
+                    f"train={tr:.6f} val={vl:.6f} best={self.best_val_loss:.6f}"
+                )
         logger.info("Surrogate training done")
         self.load_model()
         return self.model
