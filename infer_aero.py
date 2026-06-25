@@ -26,7 +26,7 @@ from src.models import ShockAutoencoder, MixtureOfExperts, AeroSurrogate
 # Model loading
 # ──────────────────────────────────────────────────────────────────────────────
 
-def load_model(model_type, device):
+def load_model(model_type, device, symbolic=False):
     cfg = MODEL_CONFIG
     if model_type == 'surrogate':
         model = AeroSurrogate(
@@ -36,10 +36,12 @@ def load_model(model_type, device):
             indicator_hidden=cfg['surrogate']['indicator_hidden'],
             expert_hidden=cfg['surrogate']['expert_hidden'],
         )
-        ckpt = MODEL_DIR / 'surrogate_best.pt'
+        ckpt_name = 'surrogate_symbolic_best.pt' if symbolic else 'surrogate_best.pt'
+        ckpt = MODEL_DIR / ckpt_name
         if not ckpt.exists():
-            raise FileNotFoundError(f"{ckpt} not found — train the surrogate first")
+            raise FileNotFoundError(f"{ckpt} not found — run launch_gpu.sh first")
         model.load_state_dict(torch.load(ckpt, map_location=device))
+        print(f"Loaded checkpoint: {ckpt_name}")
         return model.to(device).eval()
 
     ae = ShockAutoencoder(
@@ -382,7 +384,7 @@ def main():
         print(f"  [{idx}] Mach={c[0]:.2f}  AoA={c[1]:.1f}°  Pi={c[2]:.1f}  ({len(data[c]['Y_phys']):,} pts)")
 
     print("Loading model...")
-    model = load_model(args.model, device)
+    model = load_model(args.model, device, symbolic=args.symbolic)
 
     Y_mean = np.array(scaler['Y_mean'])
     Y_std  = np.array(scaler['Y_std'])
