@@ -429,9 +429,16 @@ class SurrogateTrainer:
         self.model.moe.tau.fill_(tau)
         return tau
 
-    def _loss(self, out, Y_batch, shock_label):
-        # Shock-weighted MSE: errors at the shock front are penalised shock_mse_weight× more
-        w            = 1.0 + self.shock_mse_weight * shock_label   # [B, 1]
+    def _shock_weight_map(self, X_batch, shock_label):
+        """Per-point MSE weight: shock_mse_weight× only in transonic conditions (Mach > 0.75).
+        Subsonic points get weight=1.0 — avoids penalising false Cp<Cp_crit triggers at low Mach."""
+        dev       = X_batch.device
+        Mach_real = X_batch[:, 6] * self._X_std[6].to(dev) + self._X_mean[6].to(dev)
+        is_transonic = (Mach_real > 0.75).float().unsqueeze(1)   # [B, 1]
+        return 1.0 + self.shock_mse_weight * shock_label * is_transonic
+
+    def _loss(self, out, Y_batch, shock_label, X_batch):
+        w            = self._shock_weight_map(X_batch, shock_label)
         mse_weighted = (w * (out['pred'] - Y_batch) ** 2).mean()
         return (
             mse_weighted +
@@ -439,10 +446,10 @@ class SurrogateTrainer:
             self.load_balance_weight * self._load_balance_loss(out['gate_weights'])
         )
 
-    def _loss_symbolic(self, pred, gates, Y_batch, shock_label=None):
-        """Loss when ShockIndicator is frozen — no BCE, only weighted MSE + load balance."""
-        if shock_label is not None:
-            w   = 1.0 + self.shock_mse_weight * shock_label
+    def _loss_symbolic(self, pred, gates, Y_batch, shock_label=None, X_batch=None):
+        """Loss when ShockIndicator is frozen — no BCE, only Mach-gated weighted MSE + load balance."""
+        if shock_label is not None and X_batch is not None:
+            w   = self._shock_weight_map(X_batch, shock_label)
             mse = (w * (pred - Y_batch) ** 2).mean()
         else:
             mse = self.criterion_mse(pred, Y_batch)
@@ -477,9 +484,9 @@ class SurrogateTrainer:
             out = self._forward(X_batch)
 
             if self.symbolic_sensor is not None:
-                loss = self._loss_symbolic(out['pred'], out['gate_weights'], Y_batch, shock_label)
+                loss = self._loss_symbolic(out['pred'], out['gate_weights'], Y_batch, shock_label, X_batch)
             else:
-                loss = self._loss(out, Y_batch, shock_label)
+                loss = self._loss(out, Y_batch, shock_label, X_batch)
 
             self.optimizer.zero_grad()
             loss.backward()
