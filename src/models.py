@@ -169,9 +169,9 @@ class ShockGatedMoE(nn.Module):
             # Differentiable soft routing with annealed temperature
             gates = F.gumbel_softmax(gate_logits, tau=float(self.tau), hard=False, dim=-1)
         else:
-            # Hard argmax: each point routes to exactly one expert — no blending
-            idx   = gate_logits.argmax(-1)
-            gates = torch.zeros_like(gate_logits).scatter_(1, idx.unsqueeze(1), 1.0)
+            # Soft-but-sharp routing at inference: τ saved from end of training (≈0.3).
+            # Sharpens the gate without hard discontinuities in smooth subsonic fields.
+            gates = F.softmax(gate_logits / float(self.tau), dim=-1)
         expert_stack = torch.stack([e(x) for e in self.experts], dim=1)  # [B, E, 4]
         output       = (gates.unsqueeze(-1) * expert_stack).sum(dim=1)
         return output, gates

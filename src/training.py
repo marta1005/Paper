@@ -406,7 +406,7 @@ class SurrogateTrainer:
         self._Y_std  = torch.tensor(scaler['Y_std'],  dtype=torch.float32)
 
         self.save_name     = save_name
-        self.loss_history  = {'train': [], 'val': []}
+        self.loss_history  = {'train': [], 'train_mse': [], 'val': []}
         self.best_val_loss = float('inf')
 
     def _make_shock_label(self, X_batch, Y_batch):
@@ -475,7 +475,8 @@ class SurrogateTrainer:
 
     def train_epoch(self, train_loader):
         self.model.train()
-        total = 0.0
+        total_loss = 0.0
+        total_mse  = 0.0
         for X_batch, Y_batch in train_loader:
             X_batch     = X_batch.to(self.device)
             Y_batch     = Y_batch.to(self.device)
@@ -492,11 +493,13 @@ class SurrogateTrainer:
             loss.backward()
             nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
-            total += loss.item()
+            total_loss += loss.item()
+            total_mse  += self.criterion_mse(out['pred'].detach(), Y_batch).item()
 
-        avg = total / len(train_loader)
-        self.loss_history['train'].append(avg)
-        return avg
+        n = len(train_loader)
+        self.loss_history['train'].append(total_loss / n)
+        self.loss_history['train_mse'].append(total_mse / n)
+        return total_loss / n, total_mse / n
 
     @torch.no_grad()
     def validate(self, val_loader):
@@ -526,12 +529,12 @@ class SurrogateTrainer:
         )
         for epoch in range(num_epochs):
             tau = self._update_tau(epoch, num_epochs)
-            tr  = self.train_epoch(train_loader)
+            tr_loss, tr_mse = self.train_epoch(train_loader)
             if (epoch + 1) % TRAINING_CONFIG['validate_every'] == 0:
                 vl = self.validate(val_loader)
                 logger.info(
                     f"Epoch {epoch+1}/{num_epochs} | τ={tau:.3f} | "
-                    f"train={tr:.6f} val={vl:.6f} best={self.best_val_loss:.6f}"
+                    f"train_loss={tr_loss:.4f} train_mse={tr_mse:.4f} val_mse={vl:.4f} best={self.best_val_loss:.4f}"
                 )
         logger.info("Surrogate training done")
         self.load_model()

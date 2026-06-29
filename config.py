@@ -52,7 +52,7 @@ MODEL_CONFIG = {
         'load_balance_weight': 0.01,  # λ for MoE load-balancing auxiliary loss
         'shock_mse_weight':    5.0,   # up-weight MSE in shock region (Cp < Cp_crit, Mach-gated)
         'gumbel_tau_start':    1.0,   # Gumbel-Softmax temperature at epoch 0
-        'gumbel_tau_end':      0.1,   # Gumbel-Softmax temperature at final epoch
+        'gumbel_tau_end':      0.3,   # Gumbel-Softmax temperature at final epoch (saved in buffer → used at inference)
     },
 }
 

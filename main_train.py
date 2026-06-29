@@ -202,7 +202,7 @@ def main():
 
         try:
             viz = VisualizationTools()
-            viz.plot_losses(surrogate_trainer.loss_history['train'],
+            viz.plot_losses(surrogate_trainer.loss_history['train_mse'],
                             surrogate_trainer.loss_history['val'],
                             save_path=OUTPUT_DIR / 'plots' / f'{model_name}_losses.png')
             surr_eval_obj = ModelEvaluator(surrogate_trainer.model, device=device, is_autoencoder=False)
