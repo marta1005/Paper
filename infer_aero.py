@@ -17,6 +17,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (needed for 3d projection)
 from collections import defaultdict
+from symbolic_regression import PySRWrapper  # noqa: F401 — registers class in __main__ so PySR pkls unpickle correctly
 
 from config import MODEL_DIR, MODEL_CONFIG, PLOT_DIR
 from src.models import ShockAutoencoder, MixtureOfExperts, AeroSurrogate
@@ -40,7 +41,9 @@ def load_model(model_type, device, symbolic=False):
         ckpt = MODEL_DIR / ckpt_name
         if not ckpt.exists():
             raise FileNotFoundError(f"{ckpt} not found — run launch_gpu.sh first")
-        model.load_state_dict(torch.load(ckpt, map_location=device))
+        missing, _ = model.load_state_dict(torch.load(ckpt, map_location=device), strict=False)
+        if missing:
+            print(f"  (buffers not in checkpoint, using defaults: {missing})")
         print(f"Loaded checkpoint: {ckpt_name}")
         return model.to(device).eval()
 
