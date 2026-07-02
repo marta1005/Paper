@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """
-Symbolic shock sensor — two modes:
+Symbolic shock sensor — three modes:
 
-  physics  (default): PySR/DecisionTree directly on CFD ground-truth labels.
-                      No neural model needed. Produces a closed-form formula
-                      f(Mach, AoA, x_norm, span_norm, nz, Cp_crit, ...) -> P(shock).
+  physics   (default): PySR/DecisionTree directly on CFD ground-truth labels.
+                       No neural model needed.
 
-  distill:            Distill the trained VirtualShockSensor into a formula.
-                      Requires trained AE + MoE + Sensor checkpoints.
+  surrogate:           Distill the ShockIndicator of the trained AeroSurrogate.
+                       Uses shock_prob (smooth 0-1) from the neural network as
+                       the PySR target — much easier to fit than binary labels.
+                       Recommended for getting a clean algebraic expression.
+
+  distill:             Distill the trained VirtualShockSensor (legacy AE pipeline).
 
 Usage:
-    python symbolic_regression.py                            # physics mode, PySR
-    python symbolic_regression.py --fallback                 # physics mode, Decision Tree
-    python symbolic_regression.py --mode distill             # distill from neural sensor
-    python symbolic_regression.py --knn-labels               # improve labels with K-NN gradient filter
-    python symbolic_regression.py --samples 50000
-    python symbolic_regression.py --target intensity         # only in distill mode
+    python symbolic_regression.py --mode surrogate --fallback   # DT from surrogate probs
+    python symbolic_regression.py --mode surrogate --iterations 200   # PySR from surrogate probs
+    python symbolic_regression.py --fallback                    # physics DT (fast baseline)
+    python symbolic_regression.py --knn-labels                  # physics mode with K-NN labels
 """
 import argparse
 import logging
@@ -181,29 +182,37 @@ def feature_importance(X, y, feature_names):
     return dict(zip(feature_names, imp))
 
 
-def run_pysr(X, y, feature_names, n_iter=50):
+def run_pysr(X, y, feature_names, n_iter=50, soft_target=False):
     try:
         from pysr import PySRRegressor
     except ImportError:
         logger.error("PySR not installed: pip install pysr")
         return None
 
-    logger.info(f"PySR input: {len(X):,} samples  ({int((y>0.5).sum()):,} shock  {int((y<=0.5).sum()):,} no-shock)")
+    logger.info(f"PySR input: {len(X):,} samples  target_mean={y.mean():.3f}  soft={soft_target}")
+
+    # For soft targets (shock_prob from neural net): add sigmoid so PySR can find
+    # f(x) = sigmoid(linear_combination) — much cleaner than approximating a step function.
+    unary_ops = ['exp', 'log', 'abs', 'sqrt', 'tanh']
+    if soft_target:
+        unary_ops.append('sigmoid')
 
     model = PySRRegressor(
         niterations=n_iter,
         binary_operators=['+', '-', '*', '/'],
-        unary_operators=['exp', 'log', 'abs', 'sqrt', 'tanh'],
+        unary_operators=unary_ops,
         constraints={'^': (-1, 1)},
-        maxsize=25,
+        maxsize=20,
         populations=20,
         population_size=50,
         model_selection='best',
-        parsimony=0.002,
+        parsimony=0.001,
         batching=True,
         batch_size=5000,
         random_state=42,
         verbosity=1,
+        tempdir='/tmp/pysr_tmp',
+        delete_tempfiles=True,
     )
     model.fit(X, y.astype(np.float32), variable_names=feature_names)
     return model
@@ -255,6 +264,61 @@ def evaluate_labels(y_pred_binary, y_true, tag=''):
         logger.info(classification_report(y_true, y_pred_binary, target_names=['no-shock', 'shock']))
     except Exception as e:
         logger.warning(f"Evaluation failed: {e}")
+
+
+# ── Surrogate distill mode — ShockIndicator of AeroSurrogate ─────────────────
+
+@torch.no_grad()
+def extract_surrogate_shock_prob(X_raw, n_samples, device='cpu'):
+    """
+    Run the trained AeroSurrogate's ShockIndicator on X_raw and return
+    shock_prob (continuous 0-1).  These soft labels are much better targets
+    for PySR than binary 0/1 — PySR approximates a smooth function, not a step.
+    """
+    from src.models import AeroSurrogate
+    from src.data_loader import CFDDataset
+    from torch.utils.data import DataLoader
+
+    ckpt = MODEL_DIR / 'surrogate_best.pt'
+    if not ckpt.exists():
+        logger.error(f"surrogate_best.pt not found in {MODEL_DIR}")
+        sys.exit(1)
+
+    scaler_path = MODEL_DIR / 'scaler.npy'
+    if not scaler_path.exists():
+        logger.error("scaler.npy not found — run main_train.py first")
+        sys.exit(1)
+    scaler = np.load(str(scaler_path), allow_pickle=True).item()
+
+    cfg   = MODEL_CONFIG['surrogate']
+    model = AeroSurrogate(
+        in_dim=MODEL_CONFIG['autoencoder']['input_dim'],
+        num_experts=cfg['num_experts'],
+        output_dim=cfg['output_dim'],
+        indicator_hidden=cfg.get('indicator_hidden'),
+        expert_hidden=cfg.get('expert_hidden'),
+    )
+    model.load_state_dict(torch.load(str(ckpt), map_location=device))
+    model.eval()
+    logger.info(f"Loaded AeroSurrogate from {ckpt}")
+
+    # Dummy Y (zeros) — CFDDataset only needs Y for normalisation target, not used here
+    Y_dummy = np.zeros((len(X_raw), 4), dtype=np.float32)
+    ds      = CFDDataset(X_raw[:n_samples], Y_dummy[:n_samples], scaler=scaler)
+    loader  = DataLoader(ds, batch_size=8192, shuffle=False, num_workers=0)
+
+    probs = []
+    for X_batch, _ in loader:
+        out = model(X_batch.to(device))
+        probs.append(out['shock_prob'].cpu().numpy().squeeze())
+
+    shock_prob = np.concatenate(probs)
+    logger.info(
+        f"ShockIndicator output: mean={shock_prob.mean():.3f}  "
+        f"std={shock_prob.std():.3f}  "
+        f"p(>0.5)={( shock_prob > 0.5).mean()*100:.1f}%"
+    )
+    return shock_prob
 
 
 # ── Distill mode (legacy — distills from trained neural sensor) ───────────────
@@ -329,9 +393,10 @@ def extract_distill_data(sensor, X_raw, Y_raw, n_samples, device, target='shock'
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode',       choices=['physics', 'distill'], default='physics',
-                        help='physics: PySR on CFD labels directly (recommended). '
-                             'distill: distill from trained neural sensor.')
+    parser.add_argument('--mode',       choices=['physics', 'surrogate', 'distill'], default='physics',
+                        help='physics: PySR on CFD labels directly. '
+                             'surrogate: distill ShockIndicator of AeroSurrogate (recommended for clean formula). '
+                             'distill: distill from legacy VirtualShockSensor.')
     parser.add_argument('--fallback',   action='store_true',
                         help='Use Decision Tree instead of PySR (fast baseline).')
     parser.add_argument('--knn-labels', action='store_true',
@@ -357,12 +422,21 @@ def main():
     X_raw, Y_raw = load_raw_data(args.samples)
 
     # ── Build features and labels ────────────────────────────────────────────
-    if args.mode == 'physics':
+    is_soft_target = False   # True when target is a continuous probability (not binary)
+
+    if args.mode == 'surrogate':
+        logger.info("\n[Surrogate distill] Extracting shock_prob from trained AeroSurrogate ShockIndicator")
+        device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+        y_label = extract_surrogate_shock_prob(X_raw, args.samples, device=device)
+        X_sr    = extract_sr_features(X_raw)
+        is_soft_target = True
+
+    elif args.mode == 'physics':
         logger.info("\n[Physics mode] Computing labels directly from CFD ground truth")
 
         if args.knn_labels:
             logger.info("[K-NN] Computing K-NN gradient filter for improved labels...")
-            y_label, grad_mag = make_knn_labels(
+            y_label, grad_mag = make_knn_labels(  # noqa: F821 (defined above)
                 X_raw, Y_raw, k=args.knn_k,
                 gradient_percentile=args.knn_percentile, margin=args.margin
             )
@@ -410,7 +484,8 @@ def main():
 
     else:
         logger.info("\n[PySR] Running symbolic regression...")
-        model = run_pysr(X_sr, y_label.astype(np.float32), SR_FEATURES, n_iter=args.iterations)
+        model = run_pysr(X_sr, y_label.astype(np.float32), SR_FEATURES,
+                         n_iter=args.iterations, soft_target=is_soft_target)
 
         if model is not None:
             eqs = model.equations_.sort_values('score', ascending=False).head(5)
@@ -433,7 +508,7 @@ def main():
             eq_str     = rules
 
     # ── Save results ─────────────────────────────────────────────────────────
-    tag      = f"{args.mode}_{'knn' if args.knn_labels else 'base'}"
+    tag      = f"{args.mode}_{'knn' if (args.mode == 'physics' and args.knn_labels) else 'base'}"
     out_path = RESULT_DIR / f'symbolic_regression_{tag}.txt'
 
     with open(str(out_path), 'w') as f:
