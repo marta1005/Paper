@@ -155,7 +155,9 @@ class ShockGatedMoE(nn.Module):
             nn.Linear(64, 32),         nn.ReLU(),
             nn.Linear(32, num_experts),
         )
-        self.register_buffer('tau', torch.ones(1))  # annealed externally by trainer
+        self.register_buffer('tau', torch.ones(1))       # annealed externally by trainer
+        self.register_buffer('mach_mean', torch.zeros(1))  # set from scaler by trainer
+        self.register_buffer('mach_std',  torch.ones(1))
 
         # Experts: full X → [Cp, Cfx, Cfy, Cfz]
         self.experts = nn.ModuleList([
@@ -166,11 +168,16 @@ class ShockGatedMoE(nn.Module):
     def forward(self, x, shock_prob):
         gate_logits = self.gate(torch.cat([x, shock_prob], dim=1))
         if self.training:
-            # Differentiable soft routing with annealed temperature
-            gates = F.gumbel_softmax(gate_logits, tau=float(self.tau), hard=False, dim=-1)
+            # Mach-gated Gumbel: stochastic routing only for transonic points (Mach > 0.75).
+            # Subsonic points use standard softmax — no noise on smooth Cp fields.
+            Mach_real    = x[:, 6:7] * self.mach_std + self.mach_mean   # [B, 1]
+            is_transonic = (Mach_real > 0.75)                            # [B, 1] bool
+            tau = float(self.tau)
+            gates_gumbel = F.gumbel_softmax(gate_logits, tau=tau, hard=False, dim=-1)
+            gates_soft   = F.softmax(gate_logits / tau, dim=-1)
+            gates        = torch.where(is_transonic, gates_gumbel, gates_soft)
         else:
-            # Soft-but-sharp routing at inference: τ saved from end of training (≈0.3).
-            # Sharpens the gate without hard discontinuities in smooth subsonic fields.
+            # Soft-but-sharp at inference: deterministic, τ≈0.3 saved from end of training.
             gates = F.softmax(gate_logits / float(self.tau), dim=-1)
         expert_stack = torch.stack([e(x) for e in self.experts], dim=1)  # [B, E, 4]
         output       = (gates.unsqueeze(-1) * expert_stack).sum(dim=1)

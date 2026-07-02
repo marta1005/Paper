@@ -405,6 +405,10 @@ class SurrogateTrainer:
         self._Y_mean = torch.tensor(scaler['Y_mean'], dtype=torch.float32)
         self._Y_std  = torch.tensor(scaler['Y_std'],  dtype=torch.float32)
 
+        # Wire scaler Mach stats into MoE so it can do Mach-gated Gumbel without the trainer
+        self.model.moe.mach_mean.fill_(float(scaler['X_mean'][6]))
+        self.model.moe.mach_std.fill_(float(scaler['X_std'][6]))
+
         self.save_name     = save_name
         self.loss_history  = {'train': [], 'train_mse': [], 'val': []}
         self.best_val_loss = float('inf')
