@@ -298,7 +298,12 @@ def extract_surrogate_shock_prob(X_raw, n_samples, device='cpu'):
         indicator_hidden=cfg.get('indicator_hidden'),
         expert_hidden=cfg.get('expert_hidden'),
     )
-    model.load_state_dict(torch.load(str(ckpt), map_location=device))
+    # strict=False: checkpoints saved before mach_mean/mach_std buffers were added
+    # still load correctly — those buffers are only used by the MoE gate during training,
+    # not by the ShockIndicator whose output we need here.
+    missing, unexpected = model.load_state_dict(torch.load(str(ckpt), map_location=device), strict=False)
+    if missing:
+        logger.info(f"Buffers not in checkpoint (using defaults): {missing}")
     model.eval()
     logger.info(f"Loaded AeroSurrogate from {ckpt}")
 
