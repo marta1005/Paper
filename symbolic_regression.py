@@ -266,6 +266,22 @@ def evaluate_labels(y_pred_binary, y_true, tag=''):
         logger.warning(f"Evaluation failed: {e}")
 
 
+class PySRWrapper:
+    """
+    Wraps a lambdified PySR equation as an sklearn-compatible predict_proba interface.
+    Pure numpy — no Julia required at inference time.
+    """
+    def __init__(self, fn, expr_str):
+        self._fn      = fn
+        self.expr_str = expr_str
+
+    def predict_proba(self, X):
+        args = [X[:, i] for i in range(X.shape[1])]
+        raw  = np.asarray(self._fn(*args), dtype=np.float64).ravel()
+        raw  = np.clip(raw, 0.0, None)
+        return np.column_stack([np.zeros(len(raw)), raw])
+
+
 # ── Surrogate distill mode — ShockIndicator of AeroSurrogate ─────────────────
 
 @torch.no_grad()
@@ -498,6 +514,20 @@ def main():
             for _, row in eqs.iterrows():
                 logger.info(f"  complexity={row['complexity']}  score={row['score']:.4f}  {row['equation']}")
             eq_str = str(eqs[['equation', 'score', 'complexity']])
+
+            # Convert best equation to a pure numpy callable (no Julia at inference)
+            try:
+                import sympy as sp
+                best_expr = model.sympy()
+                feat_syms = sp.symbols(' '.join(SR_FEATURES))
+                eq_fn     = sp.lambdify(feat_syms, best_expr, modules='numpy')
+                expr_str  = str(best_expr)
+                logger.info(f"Best equation (sympy): {expr_str}")
+
+                clf = PySRWrapper(eq_fn, expr_str)
+            except Exception as e:
+                logger.warning(f"Sympy extraction failed ({e}) — clf will be None (DT fallback recommended)")
+                clf = None
 
             # Calibrate PySR score with isotonic regression
             best_score = model.predict(X_sr)
