@@ -191,11 +191,11 @@ def run_pysr(X, y, feature_names, n_iter=50, soft_target=False):
 
     logger.info(f"PySR input: {len(X):,} samples  target_mean={y.mean():.3f}  soft={soft_target}")
 
-    # For soft targets (shock_prob from neural net): add sigmoid so PySR can find
-    # f(x) = sigmoid(linear_combination) — much cleaner than approximating a step function.
-    unary_ops = ['exp', 'log', 'abs', 'sqrt', 'tanh']
-    if soft_target:
-        unary_ops.append('sigmoid')
+    # For soft targets (shock_prob): PySR can construct sigmoid as 1/(1+exp(-x))
+    # using the existing exp + binary / operators. Keep operators minimal so the
+    # search space stays tractable.
+    unary_ops = ['exp', 'log', 'abs', 'tanh']
+    _ = soft_target  # reserved for future operator tuning
 
     model = PySRRegressor(
         niterations=n_iter,
