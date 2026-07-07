@@ -166,7 +166,7 @@ def predict(model, X_norm, device, batch_size=4096, symbolic_sensor=None, X_phys
 # ──────────────────────────────────────────────────────────────────────────────
 
 def plot_condition(fig, n_rows, row, X_phys, Cp_cfd, Cp_pred, cond, cond_idx,
-                   cp_lim=None):
+                   cp_lim=None, err_lim=None):
     """Fill one row: Truth Cp | Predicted Cp | Signed Error  (2D top-down XY view)."""
     x = X_phys[:, 0]   # streamwise
     y = X_phys[:, 1]   # spanwise
@@ -178,11 +178,7 @@ def plot_condition(fig, n_rows, row, X_phys, Cp_cfd, Cp_pred, cond, cond_idx,
     cp_min, cp_max = cp_lim if cp_lim is not None else (
         float(np.percentile(Cp_cfd, 2)), float(np.percentile(Cp_cfd, 98)))
 
-    # Error as % of the global Cp range
-    cp_range = cp_max - cp_min
-    err_pct = 100.0 * err / cp_range
-    err_pct_abs = round(float(np.percentile(np.abs(err_pct), 98)), 1)
-    err_range = f'Error [{-err_pct_abs:.1f}%, {err_pct_abs:.1f}%]'
+    err_abs = err_lim if err_lim is not None else float(np.percentile(np.abs(err), 98))
     mae_str = f'MAE={mae:.4f}'
 
     ax1 = fig.add_subplot(n_rows, 3, row * 3 + 1)
@@ -195,21 +191,21 @@ def plot_condition(fig, n_rows, row, X_phys, Cp_cfd, Cp_pred, cond, cond_idx,
     pastel_err = matplotlib.colors.LinearSegmentedColormap.from_list(
         'pastel_err', ['#3a78b5', 'white', '#c94040'])
 
-    sc1 = ax1.scatter(x, y, c=Cp_cfd,    cmap='jet',      vmin=cp_min,      vmax=cp_max,      **kw)
-    sc2 = ax2.scatter(x, y, c=Cp_pred,   cmap='jet',      vmin=cp_min,      vmax=cp_max,      **kw)
-    sc3 = ax3.scatter(x, y, c=err_pct,   cmap=pastel_err, vmin=-err_pct_abs, vmax=err_pct_abs, **kw)
+    sc1 = ax1.scatter(x, y, c=Cp_cfd,  cmap='jet',      vmin=cp_min,   vmax=cp_max,  **kw)
+    sc2 = ax2.scatter(x, y, c=Cp_pred, cmap='jet',      vmin=cp_min,   vmax=cp_max,  **kw)
+    sc3 = ax3.scatter(x, y, c=err,     cmap=pastel_err, vmin=-err_abs, vmax=err_abs, **kw)
 
     ax1.set_title(r'Truth $C_p$', fontsize=9)
     ax2.set_title(
         f'cond {cond_idx} | M={mach:.2f} | AoA={aoa:.1f} | Pi={pi:.1f} | {mae_str}',
         fontsize=8,
     )
-    ax3.set_title(err_range, fontsize=9)
+    ax3.set_title(r'Error $C_p$', fontsize=9)
 
     for ax, sc, label in [
-        (ax1, sc1, r'Truth $C_p$'),
-        (ax2, sc2, r'Predicted $C_p$'),
-        (ax3, sc3, 'Error (% of $C_p$ range)'),
+        (ax1, sc1, r'$C_p$'),
+        (ax2, sc2, r'$C_p$'),
+        (ax3, sc3, 'Error'),
     ]:
         plt.colorbar(sc, ax=ax, orientation='horizontal', pad=0.03, fraction=0.046, label=label)
         ax.set_xticks([]); ax.set_yticks([])
@@ -410,15 +406,18 @@ def main():
 
     # Global shared color scales so colors are consistent across rows
     all_Cp  = np.concatenate([r[1] for r in results])
+    all_err = np.concatenate([r[1] - r[2] for r in results])
     cp_lim  = (float(np.percentile(all_Cp, 2)), float(np.percentile(all_Cp, 98)))
+    err_lim = float(np.percentile(np.abs(all_err), 98))
     print(f"Global Cp range: [{cp_lim[0]:.3f}, {cp_lim[1]:.3f}]")
+    print(f"Global error range: ±{err_lim:.4f}")
 
     n   = len(selected)
     fig = plt.figure(figsize=(18, 5 * n))
 
     for row, (idx, cond, (X_phys, Cp_cfd, Cp_pred, shock_prob, gate_w)) in enumerate(zip(indices, selected, results)):
         plot_condition(fig, n, row, X_phys, Cp_cfd, Cp_pred, cond, idx,
-                       cp_lim=cp_lim)
+                       cp_lim=cp_lim, err_lim=err_lim)
         mae = float(np.abs(Cp_cfd - Cp_pred).mean())
         r2  = float(1 - np.var(Cp_cfd - Cp_pred) / np.var(Cp_cfd))
         print(f"  [{idx}] Mach={cond[0]:.2f}  AoA={cond[1]:.1f}°  Pi={cond[2]:.1f}  R²={r2:.4f}  MAE={mae:.4f}")

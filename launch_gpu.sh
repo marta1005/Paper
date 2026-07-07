@@ -1,38 +1,41 @@
-# ============================================================
-# launch_gpu.sh  —  Lanzar entrenamiento completo con GPU
+#!/bin/bash
+#$ -N sensor
+#$ -pe py 20
+#$ -o sensor.out
+#$ -e sensor.err
+#$ -l m7j
+#$ -q m7gpus
+#$ -cwd
 #
 # Uso:
-#   bash launch_gpu.sh            # modo producción (GPU)
-#   bash launch_gpu.sh --demo     # modo demo rápida (CPU/GPU, 5% datos)
-# ============================================================
-
-#!/bin/bash
-#$ -N sensor # Name of the job
-#$ -pe py 20 # Number of threads
-#$ -o sensor.out # Log for stdout
-#$ -e sensor.err # Log for stderr
-#$ -l m7j # clave siempre para ir a los nodos de mcn32*
-#$ -q m7gpus # si quiero ir a esa cola (2 nodos de gpus mcn320 / mcn321)
-#$ -cwd
+#   qsub launch_gpu.sh            # producción (GPU, 100% datos, 200 épocas)
+#   bash launch_gpu.sh --demo     # demo rápida (5% datos, 5 épocas)
 
 source /home/FlightPhysicsValidation/flowsimTest/dev_env.sh
+
+# ---------- args ----------
+DEMO=false
+for arg in "$@"; do
+  [[ "$arg" == "--demo" ]] && DEMO=true
+done
 
 # ---------- configuración ----------
 PROJECT_DIR="/home/c05279/TIFON/ECCOMAS_2026/Paper-main"
 LOG="$PROJECT_DIR/outputs/training_$(date +%Y%m%d_%H%M%S).log"
+SENSOR_PKL="$PROJECT_DIR/outputs/models/shock_sensor_symbolic_surrogate_base.pkl"
+
+mkdir -p "$PROJECT_DIR/outputs"
 
 # ---------- verificar GPU ----------
 python3.10 - <<'PYCHECK'
 import torch
 if torch.cuda.is_available():
-    print(f"[launch] GPU detectada: {torch.cuda.get_device_name(0)}")
-    print(f"         VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+    print(f"[launch] GPU: {torch.cuda.get_device_name(0)}  |  VRAM: {torch.cuda.get_device_properties(0).total_memory/1e9:.1f} GB")
 else:
     print("[launch] AVISO: CUDA no disponible, se usará CPU")
 PYCHECK
 
-DEMO=false
-# ---------- ajustes de producción (sobrescriben config.py en runtime) ----------
+# ---------- configuración de entrenamiento ----------
 if [[ "$DEMO" == false ]]; then
   echo "[launch] Modo PRODUCCIÓN: 100% datos, 200 épocas, batch 16384"
   export PAPER_TRAIN_FRACTION=1.0
@@ -40,41 +43,37 @@ if [[ "$DEMO" == false ]]; then
   export PAPER_BATCH_SIZE=16384
   export PAPER_NUM_WORKERS=8
 else
-  echo "[launch] Modo DEMO: 5% datos, 5 épocas, batch 16384"
+  echo "[launch] Modo DEMO: 5% datos, 5 épocas, batch 256"
   export PAPER_TRAIN_FRACTION=0.05
   export PAPER_EPOCHS=5
   export PAPER_BATCH_SIZE=256
   export PAPER_NUM_WORKERS=0
 fi
 
-# ---------- lanzar ----------
-mkdir -p "$PROJECT_DIR/outputs"
 echo "[launch] Log → $LOG"
-
 cd "$PROJECT_DIR"
 
-echo "[launch] [1/4] Preprocesando datos (9 -> 16 features)..."
-python3.10 preprocess_data.py 2>&1 | tee -a "$LOG"
+# ---------- pipeline ----------
+echo "[launch] [1/4] Preprocesando datos (9 → 16 features)..."
+python3.10 preprocess_data.py 2>&1 | tee -a "$LOG" || exit 1
 
-echo "[launch] [2/4] Entrenando Surrogate (ShockIndicator + MoE, neural gate)..."
-python3.10 main_train.py --stages surrogate 2>&1 | tee -a "$LOG"
+echo "[launch] [2/4] Entrenando AeroSurrogate (LayerNorm+SiLU, shock-gated residual, neural gate)..."
+python3.10 main_train.py --stages surrogate 2>&1 | tee -a "$LOG" || exit 1
 
-echo "[launch] [3/4] Sensor simbólico con K-NN gradient labels (Decision Tree)..."
+echo "[launch] [3/4] Destilando ShockIndicator → fórmula simbólica (PySR, 200 iteraciones)..."
 python3.10 symbolic_regression.py \
-    --mode physics --fallback \
-    --knn-labels --knn-k 50 --knn-percentile 85 \
-    --samples 200000 2>&1 | tee -a "$LOG"
+    --mode surrogate \
+    --samples 200000 \
+    --iterations 200 2>&1 | tee -a "$LOG" || exit 1
 
-SENSOR_PKL="$PROJECT_DIR/outputs/models/shock_sensor_symbolic_physics_knn.pkl"
-echo "[launch] [4/4] Reentrenando MoE con gate simbólico (ShockIndicator congelado)..."
+echo "[launch] [4/4] Reentrenando con gate simbólico congelado..."
 python3.10 main_train.py --stages surrogate \
-    --symbolic-gate "$SENSOR_PKL" 2>&1 | tee -a "$LOG"
+    --symbolic-gate "$SENSOR_PKL" 2>&1 | tee -a "$LOG" || exit 1
 
 echo ""
 echo "[launch] ✓ Pipeline finalizado."
-echo "[launch]   Modelos:              outputs/models/surrogate_best.pt (neural gate)"
-echo "[launch]                         outputs/models/surrogate_symbolic_best.pt (symbolic gate)"
-echo "[launch]   Sensor simbólico:     $SENSOR_PKL"
-echo "[launch]   Resultados SR:        outputs/results/symbolic_regression_*.txt"
-echo "[launch]   Plots:                outputs/plots/"
-echo "[launch]   Log:                  $LOG"
+echo "[launch]   Modelos:          outputs/models/surrogate_best.pt          (gate neural)"
+echo "[launch]                     outputs/models/surrogate_symbolic_best.pt  (gate simbólico)"
+echo "[launch]   Sensor simbólico: $SENSOR_PKL"
+echo "[launch]   Resultados SR:    outputs/results/symbolic_regression_surrogate_base.txt"
+echo "[launch]   Log:              $LOG"

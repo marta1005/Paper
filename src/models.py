@@ -7,14 +7,14 @@ logger = logging.getLogger(__name__)
 
 
 def _mlp(dims, batch_norm=True, dropout=0.1, final_activation=False):
+    # batch_norm param kept for API compatibility; now uses LayerNorm+SiLU (no train/eval gap)
     layers = []
     for i in range(len(dims) - 1):
         layers.append(nn.Linear(dims[i], dims[i + 1]))
         is_last = (i == len(dims) - 2)
         if not is_last or final_activation:
-            if batch_norm:
-                layers.append(nn.BatchNorm1d(dims[i + 1]))
-            layers.append(nn.LeakyReLU(0.2))
+            layers.append(nn.LayerNorm(dims[i + 1]))
+            layers.append(nn.SiLU())
             if dropout > 0:
                 layers.append(nn.Dropout(dropout))
     return nn.Sequential(*layers)
@@ -124,7 +124,8 @@ class ShockIndicator(nn.Module):
         for i in range(len(dims) - 1):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
             if i < len(dims) - 2:
-                layers.append(nn.LeakyReLU(0.2))
+                layers.append(nn.LayerNorm(dims[i + 1]))
+                layers.append(nn.SiLU())
                 layers.append(nn.Dropout(0.1))
         self.network = nn.Sequential(*layers)
 
@@ -144,26 +145,32 @@ class ShockGatedMoE(nn.Module):
     Inference: hard argmax — each point commits to exactly one expert,
                producing a sharp discontinuity at the shock front instead of a blend.
     """
-    def __init__(self, in_dim=14, num_experts=4, expert_hidden=None, output_dim=4):
+    def __init__(self, in_dim=14, num_experts=4, expert_hidden=None, output_dim=4,
+                 shock_expert_hidden=None):
         super().__init__()
         if expert_hidden is None:
             expert_hidden = [128, 256, 128]
+        if shock_expert_hidden is None:
+            shock_expert_hidden = [128, 128]
 
         # Gate: [shock_prob(1) | X(14)] → num_experts logits (Softmax applied via Gumbel)
         self.gate = nn.Sequential(
-            nn.Linear(in_dim + 1, 64), nn.ReLU(),
-            nn.Linear(64, 32),         nn.ReLU(),
+            nn.Linear(in_dim + 1, 64), nn.LayerNorm(64), nn.SiLU(),
+            nn.Linear(64, 32),         nn.LayerNorm(32), nn.SiLU(),
             nn.Linear(32, num_experts),
         )
         self.register_buffer('tau', torch.ones(1))       # annealed externally by trainer
         self.register_buffer('mach_mean', torch.zeros(1))  # set from scaler by trainer
         self.register_buffer('mach_std',  torch.ones(1))
 
-        # Experts: full X → [Cp, Cfx, Cfy, Cfz]
+        # Smooth experts: full X → [Cp, Cfx, Cfy, Cfz]
         self.experts = nn.ModuleList([
-            _mlp([in_dim] + expert_hidden + [output_dim], batch_norm=True, dropout=0.1)
+            _mlp([in_dim] + expert_hidden + [output_dim], dropout=0.1)
             for _ in range(num_experts)
         ])
+
+        # Shock-gated residual expert: explicit discontinuity term, scaled by shock_prob
+        self.shock_expert = _mlp([in_dim] + shock_expert_hidden + [output_dim], dropout=0.1)
 
     def forward(self, x, shock_prob):
         gate_logits = self.gate(torch.cat([x, shock_prob], dim=1))
@@ -180,7 +187,9 @@ class ShockGatedMoE(nn.Module):
             # Soft-but-sharp at inference: deterministic, τ≈0.3 saved from end of training.
             gates = F.softmax(gate_logits / float(self.tau), dim=-1)
         expert_stack = torch.stack([e(x) for e in self.experts], dim=1)  # [B, E, 4]
-        output       = (gates.unsqueeze(-1) * expert_stack).sum(dim=1)
+        smooth_out   = (gates.unsqueeze(-1) * expert_stack).sum(dim=1)
+        # Shock-gated residual: shock_prob in [0,1] gates the explicit discontinuity term
+        output = smooth_out + shock_prob * self.shock_expert(x)
         return output, gates
 
 
@@ -196,10 +205,11 @@ class AeroSurrogate(nn.Module):
     uses only X.
     """
     def __init__(self, in_dim=14, num_experts=4, output_dim=4,
-                 indicator_hidden=None, expert_hidden=None):
+                 indicator_hidden=None, expert_hidden=None, shock_expert_hidden=None):
         super().__init__()
         self.shock_indicator = ShockIndicator(in_dim, indicator_hidden)
-        self.moe             = ShockGatedMoE(in_dim, num_experts, expert_hidden, output_dim)
+        self.moe             = ShockGatedMoE(in_dim, num_experts, expert_hidden, output_dim,
+                                             shock_expert_hidden)
 
     def forward(self, x):
         shock_logit, shock_prob = self.shock_indicator(x)

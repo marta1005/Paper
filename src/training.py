@@ -369,6 +369,7 @@ class SurrogateTrainer:
             output_dim=cfg['output_dim'],
             indicator_hidden=cfg.get('indicator_hidden'),
             expert_hidden=cfg.get('expert_hidden'),
+            shock_expert_hidden=cfg.get('shock_expert_hidden'),
         ).to(device)
 
         # Symbolic gate mode: freeze ShockIndicator, train MoE only

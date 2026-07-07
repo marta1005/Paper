@@ -300,7 +300,7 @@ class PySRWrapper:
 # ── Surrogate distill mode — ShockIndicator of AeroSurrogate ─────────────────
 
 @torch.no_grad()
-def extract_surrogate_shock_prob(X_raw, n_samples, device='cpu'):
+def extract_surrogate_shock_prob(X_raw, n_samples, device='cpu', ckpt=None):
     """
     Run the trained AeroSurrogate's ShockIndicator on X_raw and return
     shock_prob (continuous 0-1).  These soft labels are much better targets
@@ -310,7 +310,7 @@ def extract_surrogate_shock_prob(X_raw, n_samples, device='cpu'):
     from src.data_loader import CFDDataset
     from torch.utils.data import DataLoader
 
-    ckpt = MODEL_DIR / 'surrogate_best.pt'
+    ckpt = Path(ckpt) if ckpt else MODEL_DIR / 'surrogate_best.pt'
     if not ckpt.exists():
         logger.error(f"surrogate_best.pt not found in {MODEL_DIR}")
         sys.exit(1)
@@ -449,6 +449,9 @@ def main():
     parser.add_argument('--target',     choices=['shock', 'intensity'], default='shock',
                         help='Target variable (intensity only in distill mode).')
     parser.add_argument('--device',     default='cpu')
+    parser.add_argument('--ckpt',       default=None,
+                        help='Custom surrogate checkpoint (default: MODEL_DIR/surrogate_best.pt). '
+                             'Use with --mode surrogate to distill from a fine-tuned model.')
     args = parser.parse_args()
 
     logger.info("=" * 70)
@@ -463,7 +466,7 @@ def main():
     if args.mode == 'surrogate':
         logger.info("\n[Surrogate distill] Extracting shock_prob from trained AeroSurrogate ShockIndicator")
         device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
-        y_label = extract_surrogate_shock_prob(X_raw, args.samples, device=device)
+        y_label = extract_surrogate_shock_prob(X_raw, args.samples, device=device, ckpt=args.ckpt)
         X_sr    = extract_sr_features(X_raw)
         is_soft_target = True
 

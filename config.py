@@ -45,8 +45,9 @@ MODEL_CONFIG = {
     'surrogate': {
         'num_experts':      4,
         'output_dim':       4,
-        'indicator_hidden': [64, 32, 16],  # ShockIndicator MLP dims
-        'expert_hidden':    [128, 256, 128],  # each expert MLP dims
+        'indicator_hidden':     [64, 32, 16],    # ShockIndicator MLP dims
+        'expert_hidden':        [128, 256, 128], # smooth expert MLP dims
+        'shock_expert_hidden':  [128, 128],      # shock-gated residual expert dims
         'shock_weight':        0.1,    # λ weighting shock BCE vs aero MSE
         'shock_pos_weight':    5.0,   # pos_weight for BCE (19% positive shock labels)
         'load_balance_weight': 0.01,  # λ for MoE load-balancing auxiliary loss
