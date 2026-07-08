@@ -297,9 +297,15 @@ class PySRWrapper:
         return {'expr_str': self.expr_str, 'feature_names': self.feature_names}
 
     def __setstate__(self, state):
-        import sympy as sp
+        import numpy as _np
         self.expr_str      = state['expr_str']
         self.feature_names = state['feature_names']
-        expr               = sp.sympify(self.expr_str)
-        feat_syms          = sp.symbols(' '.join(self.feature_names))
-        self._fn           = sp.lambdify(feat_syms, expr, modules='numpy')
+        _ns = {fn: getattr(_np, fn)
+               for fn in ['exp', 'log', 'sqrt', 'sin', 'cos', 'tan',
+                          'tanh', 'sinh', 'cosh', 'abs', 'sign']}
+        _expr  = self.expr_str
+        _names = self.feature_names
+        def _fn(*args):
+            local = dict(zip(_names, args))
+            return eval(_expr, _ns, local)   # noqa: S307 — expr comes from PySR, not user input
+        self._fn = _fn
