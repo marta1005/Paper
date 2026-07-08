@@ -17,7 +17,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (needed for 3d projection)
 from collections import defaultdict
-from symbolic_regression import PySRWrapper  # noqa: F401 — registers class in __main__ so PySR pkls unpickle correctly
+from src.models import PySRWrapper  # noqa: F401 — ensures pkl unpickling works (class lives in src.models)
 
 from config import MODEL_DIR, MODEL_CONFIG, PLOT_DIR
 from src.models import ShockAutoencoder, MixtureOfExperts, AeroSurrogate

@@ -266,35 +266,7 @@ def evaluate_labels(y_pred_binary, y_true, tag=''):
         logger.warning(f"Evaluation failed: {e}")
 
 
-class PySRWrapper:
-    """
-    Wraps a PySR equation as an sklearn-compatible predict_proba interface.
-    Pure numpy at inference — no Julia required.
-
-    Pickling saves only expr_str + feature_names (strings).
-    The numpy callable is rebuilt from sympy on unpickle.
-    """
-    def __init__(self, fn, expr_str, feature_names):
-        self._fn          = fn
-        self.expr_str     = expr_str
-        self.feature_names = list(feature_names)
-
-    def predict_proba(self, X):
-        args = [X[:, i] for i in range(X.shape[1])]
-        raw  = np.asarray(self._fn(*args), dtype=np.float64).ravel()
-        raw  = np.clip(raw, 0.0, None)
-        return np.column_stack([np.zeros(len(raw)), raw])
-
-    def __getstate__(self):
-        return {'expr_str': self.expr_str, 'feature_names': self.feature_names}
-
-    def __setstate__(self, state):
-        import sympy as sp
-        self.expr_str      = state['expr_str']
-        self.feature_names = state['feature_names']
-        expr               = sp.sympify(self.expr_str)
-        feat_syms          = sp.symbols(' '.join(self.feature_names))
-        self._fn           = sp.lambdify(feat_syms, expr, modules='numpy')
+from src.models import PySRWrapper  # noqa: F401 — class lives in src.models so server pkl unpickling works without PySR
 
 
 # ── Surrogate distill mode — ShockIndicator of AeroSurrogate ─────────────────

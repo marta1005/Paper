@@ -271,3 +271,35 @@ class VirtualShockSensor(nn.Module):
             out['gate_weights'] = gate_weights
 
         return out
+
+
+class PySRWrapper:
+    """
+    Wraps a PySR equation as an sklearn-compatible predict_proba interface.
+    Pure numpy+sympy at inference — no Julia/PySR required on the server.
+
+    Defined here (not in symbolic_regression.py) so pickle can resolve the
+    class path as 'src.models.PySRWrapper' without importing PySR.
+    """
+    def __init__(self, fn, expr_str, feature_names):
+        self._fn           = fn
+        self.expr_str      = expr_str
+        self.feature_names = list(feature_names)
+
+    def predict_proba(self, X):
+        import numpy as np
+        args = [X[:, i] for i in range(X.shape[1])]
+        raw  = np.asarray(self._fn(*args), dtype=np.float64).ravel()
+        raw  = np.clip(raw, 0.0, None)
+        return np.column_stack([np.zeros(len(raw)), raw])
+
+    def __getstate__(self):
+        return {'expr_str': self.expr_str, 'feature_names': self.feature_names}
+
+    def __setstate__(self, state):
+        import sympy as sp
+        self.expr_str      = state['expr_str']
+        self.feature_names = state['feature_names']
+        expr               = sp.sympify(self.expr_str)
+        feat_syms          = sp.symbols(' '.join(self.feature_names))
+        self._fn           = sp.lambdify(feat_syms, expr, modules='numpy')
