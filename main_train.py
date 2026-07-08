@@ -101,7 +101,12 @@ def main():
     args = parser.parse_args()
     stages = set(args.stages)
 
-    device = torch.device('cuda' if torch.cuda.is_available() and DEVICE == 'cuda' else 'cpu')
+    if torch.cuda.is_available() and DEVICE == 'cuda':
+        device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
 
     logger.info("=" * 70)
     logger.info(f"SHOCK DETECTION PIPELINE  |  stages: {sorted(stages)}  |  device: {device}")
