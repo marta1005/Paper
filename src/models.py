@@ -307,5 +307,7 @@ class PySRWrapper:
         _names = self.feature_names
         def _fn(*args):
             local = dict(zip(_names, args))
-            return eval(_expr, _ns, local)   # noqa: S307 — expr comes from PySR, not user input
+            with _np.errstate(divide='ignore', invalid='ignore', over='ignore'):
+                result = eval(_expr, _ns, local)   # noqa: S307
+            return _np.nan_to_num(result, nan=0.0, posinf=1.0, neginf=0.0)
         self._fn = _fn
