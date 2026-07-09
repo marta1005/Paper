@@ -103,7 +103,7 @@ def main():
 
     if torch.cuda.is_available() and DEVICE == 'cuda':
         device = torch.device('cuda')
-    elif torch.backends.mps.is_available():
+    elif getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available():
         device = torch.device('mps')
     else:
         device = torch.device('cpu')
