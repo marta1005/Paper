@@ -56,6 +56,7 @@ outputs/models/
 outputs/results/
 outputs/plots/
 !outputs/models/shock_sensor_symbolic_surrogate_base.pkl
+!outputs/models/shock_sensor_symbolic_protected.pkl
 
 # Logs
 *.log
