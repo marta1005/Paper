@@ -146,12 +146,13 @@ class ShockGatedMoE(nn.Module):
                producing a sharp discontinuity at the shock front instead of a blend.
     """
     def __init__(self, in_dim=14, num_experts=4, expert_hidden=None, output_dim=4,
-                 shock_expert_hidden=None):
+                 shock_expert_hidden=None, disable_shock_expert=False):
         super().__init__()
         if expert_hidden is None:
             expert_hidden = [128, 256, 128]
         if shock_expert_hidden is None:
             shock_expert_hidden = [128, 128]
+        self.disable_shock_expert = disable_shock_expert
 
         # Gate: [shock_prob(1) | X(14)] → num_experts logits (Softmax applied via Gumbel)
         self.gate = nn.Sequential(
@@ -189,7 +190,10 @@ class ShockGatedMoE(nn.Module):
         expert_stack = torch.stack([e(x) for e in self.experts], dim=1)  # [B, E, 4]
         smooth_out   = (gates.unsqueeze(-1) * expert_stack).sum(dim=1)
         # Shock-gated residual: shock_prob in [0,1] gates the explicit discontinuity term
-        output = smooth_out + shock_prob * self.shock_expert(x)
+        if self.disable_shock_expert:
+            output = smooth_out
+        else:
+            output = smooth_out + shock_prob * self.shock_expert(x)
         return output, gates
 
 
@@ -205,11 +209,13 @@ class AeroSurrogate(nn.Module):
     uses only X.
     """
     def __init__(self, in_dim=14, num_experts=4, output_dim=4,
-                 indicator_hidden=None, expert_hidden=None, shock_expert_hidden=None):
+                 indicator_hidden=None, expert_hidden=None, shock_expert_hidden=None,
+                 disable_shock_expert=False):
         super().__init__()
         self.shock_indicator = ShockIndicator(in_dim, indicator_hidden)
         self.moe             = ShockGatedMoE(in_dim, num_experts, expert_hidden, output_dim,
-                                             shock_expert_hidden)
+                                             shock_expert_hidden,
+                                             disable_shock_expert=disable_shock_expert)
 
     def forward(self, x):
         shock_logit, shock_prob = self.shock_indicator(x)
@@ -303,6 +309,7 @@ class PySRWrapper:
         _ns = {fn: getattr(_np, fn)
                for fn in ['exp', 'log', 'sqrt', 'sin', 'cos', 'tan',
                           'tanh', 'sinh', 'cosh', 'abs', 'sign']}
+        _ns['maximum'] = _np.maximum   # needed for span_norm-protected formula
         _expr  = self.expr_str
         _names = self.feature_names
         def _fn(*args):

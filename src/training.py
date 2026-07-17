@@ -359,8 +359,22 @@ class SurrogateTrainer:
     At inference only X is needed; Y is never used.
     """
 
-    def __init__(self, scaler, device='cpu', symbolic_sensor_path=None, save_name='surrogate_best.pt'):
-        self.device = device
+    def __init__(self, scaler, device='cpu', symbolic_sensor_path=None,
+                 save_name='surrogate_best.pt',
+                 gate_mode='neural',
+                 no_shock_expert=False,
+                 shock_mse_weight_override=None):
+        """
+        gate_mode options:
+          'neural'       — ShockIndicator trained end-to-end (default)
+          'symbolic'     — frozen symbolic gate from pkl (same as symbolic_sensor_path)
+          'constant:X'   — p_s fixed at X for all points (X in [0,1])
+          'random'       — p_s ~ U(0,1) per point per batch; fixed seed at eval
+        no_shock_expert  — omit p_s * shock_expert(x) residual from forward
+        shock_mse_weight_override — override config value (set 0 to ablate shock-weighted MSE)
+        """
+        self.device    = device
+        self.gate_mode = gate_mode
         cfg = MODEL_CONFIG['surrogate']
 
         self.model = AeroSurrogate(
@@ -370,11 +384,14 @@ class SurrogateTrainer:
             indicator_hidden=cfg.get('indicator_hidden'),
             expert_hidden=cfg.get('expert_hidden'),
             shock_expert_hidden=cfg.get('shock_expert_hidden'),
+            disable_shock_expert=no_shock_expert,
         ).to(device)
 
         # Symbolic gate mode: freeze ShockIndicator, train MoE only
         self.symbolic_sensor = None
-        if symbolic_sensor_path:
+        if symbolic_sensor_path or gate_mode == 'symbolic':
+            if symbolic_sensor_path is None:
+                raise ValueError("gate_mode='symbolic' requires symbolic_sensor_path")
             import pickle
             with open(symbolic_sensor_path, 'rb') as f:
                 self.symbolic_sensor = pickle.load(f)
@@ -383,6 +400,12 @@ class SurrogateTrainer:
             for p in self.model.shock_indicator.parameters():
                 p.requires_grad_(False)
             logger.info(f"Symbolic gate loaded from {symbolic_sensor_path} — ShockIndicator frozen")
+
+        # Constant / random gate: freeze ShockIndicator (not trained, not needed)
+        if gate_mode.startswith('constant:') or gate_mode == 'random':
+            for p in self.model.shock_indicator.parameters():
+                p.requires_grad_(False)
+            logger.info(f"gate_mode={gate_mode}: ShockIndicator frozen, BCE disabled")
 
         self.optimizer = optim.Adam(
             filter(lambda p: p.requires_grad, self.model.parameters()),
@@ -397,9 +420,13 @@ class SurrogateTrainer:
         self.shock_weight        = cfg.get('shock_weight', 0.1)
         self.load_balance_weight = cfg.get('load_balance_weight', 0.01)
         self.num_experts         = cfg.get('num_experts', 4)
-        self.shock_mse_weight    = cfg.get('shock_mse_weight', 10.0)
+        self.shock_mse_weight    = (shock_mse_weight_override
+                                    if shock_mse_weight_override is not None
+                                    else cfg.get('shock_mse_weight', 10.0))
         self.tau_start           = cfg.get('gumbel_tau_start', 1.0)
         self.tau_end             = cfg.get('gumbel_tau_end', 0.1)
+        logger.info(f"gate_mode={gate_mode}  no_shock_expert={no_shock_expert}  "
+                    f"shock_mse_weight={self.shock_mse_weight}")
 
         self._X_mean = torch.tensor(scaler['X_mean'], dtype=torch.float32)
         self._X_std  = torch.tensor(scaler['X_std'],  dtype=torch.float32)
@@ -443,22 +470,15 @@ class SurrogateTrainer:
         return 1.0 + self.shock_mse_weight * shock_label * is_transonic
 
     def _loss(self, out, Y_batch, shock_label, X_batch):
+        """Unified loss: BCE only for neural gate; shock-weighted MSE always."""
         w            = self._shock_weight_map(X_batch, shock_label)
         mse_weighted = (w * (out['pred'] - Y_batch) ** 2).mean()
-        return (
-            mse_weighted +
-            self.shock_weight * self.criterion_bce_shock(out['shock_logit'], shock_label) +
-            self.load_balance_weight * self._load_balance_loss(out['gate_weights'])
-        )
-
-    def _loss_symbolic(self, pred, gates, Y_batch, shock_label=None, X_batch=None):
-        """Loss when ShockIndicator is frozen — no BCE, only Mach-gated weighted MSE + load balance."""
-        if shock_label is not None and X_batch is not None:
-            w   = self._shock_weight_map(X_batch, shock_label)
-            mse = (w * (pred - Y_batch) ** 2).mean()
-        else:
-            mse = self.criterion_mse(pred, Y_batch)
-        return mse + self.load_balance_weight * self._load_balance_loss(gates)
+        lb           = self.load_balance_weight * self._load_balance_loss(out['gate_weights'])
+        # BCE only when ShockIndicator is trainable
+        use_bce = (self.gate_mode == 'neural' and self.symbolic_sensor is None)
+        bce = (self.shock_weight * self.criterion_bce_shock(out['shock_logit'], shock_label)
+               if use_bce else 0.0)
+        return mse_weighted + bce + lb
 
     def _symbolic_shock_prob(self, X_batch):
         """Compute shock probability from the frozen symbolic DT sensor."""
@@ -471,12 +491,33 @@ class SurrogateTrainer:
         return torch.from_numpy(sp_cal[:, None]).to(dev)
 
     def _forward(self, X_batch):
-        """Forward pass: use symbolic gate if loaded, else neural ShockIndicator."""
+        """Forward pass: gate_mode controls shock_prob source."""
+        if self.gate_mode.startswith('constant:'):
+            val = float(self.gate_mode.split(':')[1])
+            sp  = torch.full((len(X_batch), 1), val, device=X_batch.device)
+            pred, gates = self.model.moe(X_batch, sp)
+            # shock_logit stub (not used in loss for this mode)
+            return {'pred': pred, 'shock_prob': sp, 'gate_weights': gates,
+                    'shock_logit': torch.zeros_like(sp)}
+
+        if self.gate_mode == 'random':
+            if self.model.training:
+                sp = torch.rand(len(X_batch), 1, device=X_batch.device)
+            else:
+                g  = torch.Generator(device=X_batch.device)
+                g.manual_seed(42)
+                sp = torch.rand(len(X_batch), 1, generator=g, device=X_batch.device)
+            pred, gates = self.model.moe(X_batch, sp)
+            return {'pred': pred, 'shock_prob': sp, 'gate_weights': gates,
+                    'shock_logit': torch.zeros_like(sp)}
+
         if self.symbolic_sensor is not None:
-            shock_prob = self._symbolic_shock_prob(X_batch)
+            shock_prob  = self._symbolic_shock_prob(X_batch)
             pred, gates = self.model.moe(X_batch, shock_prob)
-            return {'pred': pred, 'shock_prob': shock_prob, 'gate_weights': gates}
-        return self.model(X_batch)
+            return {'pred': pred, 'shock_prob': shock_prob, 'gate_weights': gates,
+                    'shock_logit': torch.zeros_like(shock_prob)}
+
+        return self.model(X_batch)  # neural gate
 
     def train_epoch(self, train_loader):
         self.model.train()
@@ -487,12 +528,8 @@ class SurrogateTrainer:
             Y_batch     = Y_batch.to(self.device)
             shock_label = self._make_shock_label(X_batch, Y_batch)
 
-            out = self._forward(X_batch)
-
-            if self.symbolic_sensor is not None:
-                loss = self._loss_symbolic(out['pred'], out['gate_weights'], Y_batch, shock_label, X_batch)
-            else:
-                loss = self._loss(out, Y_batch, shock_label, X_batch)
+            out  = self._forward(X_batch)
+            loss = self._loss(out, Y_batch, shock_label, X_batch)
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -527,22 +564,40 @@ class SurrogateTrainer:
     def train(self, train_loader, val_loader, num_epochs=None):
         if num_epochs is None:
             num_epochs = TRAINING_CONFIG['num_epochs']
+        patience      = TRAINING_CONFIG.get('early_stopping_patience', 5)
+        delta         = TRAINING_CONFIG.get('early_stopping_delta', 1e-4)
+        validate_every = TRAINING_CONFIG.get('validate_every', 5)
+        patience_ctr  = 0
+        best_es       = float('inf')
+
         logger.info(
             f"Surrogate training for {num_epochs} epochs | "
             f"τ: {self.tau_start:.1f}→{self.tau_end:.2f} | "
-            f"shock_mse_w={self.shock_mse_weight}"
+            f"shock_mse_w={self.shock_mse_weight} | "
+            f"gate={self.gate_mode} | early_stop patience={patience}"
         )
         for epoch in range(num_epochs):
             tau = self._update_tau(epoch, num_epochs)
             tr_loss, tr_mse = self.train_epoch(train_loader)
-            if (epoch + 1) % TRAINING_CONFIG['validate_every'] == 0:
+            if (epoch + 1) % validate_every == 0:
                 vl = self.validate(val_loader)
                 logger.info(
                     f"Epoch {epoch+1}/{num_epochs} | τ={tau:.3f} | "
-                    f"train_loss={tr_loss:.4f} train_mse={tr_mse:.4f} val_mse={vl:.4f} best={self.best_val_loss:.4f}"
+                    f"train_loss={tr_loss:.4f} train_mse={tr_mse:.4f} "
+                    f"val_mse={vl:.4f} best={self.best_val_loss:.4f}"
                 )
+                # Early stopping (tracked on val MSE; patience = # consecutive checks w/o improvement)
+                if vl < best_es - delta:
+                    best_es      = vl
+                    patience_ctr = 0
+                else:
+                    patience_ctr += 1
+                    if patience_ctr >= patience:
+                        logger.info(f"Early stopping triggered at epoch {epoch+1}")
+                        break
+
         logger.info("Surrogate training done")
-        self.load_model()
+        self.load_model(self.save_name)   # fix: use save_name, not hardcoded default
         return self.model
 
     def save_model(self, name='surrogate_best.pt'):

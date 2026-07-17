@@ -98,6 +98,25 @@ def main():
         help='Path to symbolic sensor pkl. When set with --stages surrogate, '
              'freezes ShockIndicator and trains MoE with symbolic gates.'
     )
+    parser.add_argument(
+        '--gate-mode', default=None, metavar='MODE',
+        help=('Gate mode for ablation studies (overrides --symbolic-gate logic). '
+              'Options: neural | symbolic | constant:0.0 | constant:0.17 | constant:0.5 | random. '
+              'constant/random freeze the ShockIndicator and skip BCE.')
+    )
+    parser.add_argument(
+        '--no-shock-expert', action='store_true',
+        help='Ablation: remove the p_s*shock_expert(x) residual from forward pass.'
+    )
+    parser.add_argument(
+        '--lambda-sw', type=float, default=None, metavar='W',
+        help='Override shock_mse_weight (set to 0 to ablate shock-weighted MSE).'
+    )
+    parser.add_argument(
+        '--warm-start', default=None, metavar='PT',
+        help='Load weights from this checkpoint before training (warm start). '
+             'Use surrogate_best.pt to fine-tune a pretrained neural gate with a new gate mode.'
+    )
     args = parser.parse_args()
     stages = set(args.stages)
 
@@ -190,18 +209,51 @@ def main():
     # ── Shock-Gated Surrogate ──────────────────────────────────────────────────
     if 'surrogate' in stages:
         symbolic_gate = args.symbolic_gate
-        if symbolic_gate:
-            logger.info(f"\n[Surrogate] Training MoE with symbolic gate: {symbolic_gate}")
-            model_name = 'surrogate_symbolic'
-        else:
-            logger.info("\n[Surrogate] Training Shock-Gated Surrogate  (ShockIndicator + MoE, no AE)")
+
+        # Resolve gate_mode
+        gate_mode = args.gate_mode
+        if gate_mode is None:
+            gate_mode = 'symbolic' if symbolic_gate else 'neural'
+
+        # Build save name from flags (never overwrites paper checkpoints accidentally)
+        if gate_mode == 'neural':
             model_name = 'surrogate'
+        elif gate_mode == 'symbolic':
+            model_name = 'surrogate_symbolic'
+        elif gate_mode.startswith('constant:'):
+            tag = gate_mode.split(':')[1].replace('.', 'p')
+            model_name = f'surrogate_gate_const{tag}'
+        elif gate_mode == 'random':
+            model_name = 'surrogate_gate_random'
+        else:
+            model_name = f'surrogate_gate_{gate_mode}'
+
+        if args.no_shock_expert:
+            model_name += '_noshockexp'
+        if args.lambda_sw is not None:
+            tag = str(args.lambda_sw).replace('.', 'p')
+            model_name += f'_sw{tag}'
+
+        logger.info(
+            f"\n[Surrogate] gate_mode={gate_mode}  no_shock_expert={args.no_shock_expert}  "
+            f"lambda_sw={args.lambda_sw}  save={model_name}_best.pt"
+        )
 
         surrogate_trainer = SurrogateTrainer(
             scaler=scaler, device=device,
-            symbolic_sensor_path=symbolic_gate,
+            symbolic_sensor_path=symbolic_gate if gate_mode in ('symbolic',) else None,
             save_name=f'{model_name}_best.pt',
+            gate_mode=gate_mode,
+            no_shock_expert=args.no_shock_expert,
+            shock_mse_weight_override=args.lambda_sw,
         )
+
+        if args.warm_start:
+            import torch as _torch
+            _sd = _torch.load(args.warm_start, map_location=device, weights_only=False)
+            surrogate_trainer.model.load_state_dict(_sd, strict=False)
+            logger.info(f"Warm start loaded from {args.warm_start}")
+
         surrogate_trainer.train(train_loader, val_loader)
         logger.info(f"Surrogate best val loss: {surrogate_trainer.best_val_loss:.6f}")
 
@@ -210,7 +262,13 @@ def main():
             viz.plot_losses(surrogate_trainer.loss_history['train_mse'],
                             surrogate_trainer.loss_history['val'],
                             save_path=OUTPUT_DIR / 'plots' / f'{model_name}_losses.png')
-            surr_eval_obj = ModelEvaluator(surrogate_trainer.model, device=device, is_autoencoder=False)
+            # Pass symbolic_sensor so ModelEvaluator uses PySR formula (not frozen ShockIndicator)
+            _sym_sensor = getattr(surrogate_trainer, 'symbolic_sensor', None)
+            surr_eval_obj = ModelEvaluator(
+                surrogate_trainer.model, device=device, is_autoencoder=False,
+                symbolic_sensor=_sym_sensor,
+                scaler=scaler if _sym_sensor is not None else None,
+            )
             surr_eval     = surr_eval_obj.evaluate(test_loader, return_predictions=True)
             surr_eval_obj.log_metrics(surr_eval['metrics'])
             save_evaluation_report(surr_eval['metrics'], surr_eval, model_name=model_name)

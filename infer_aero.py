@@ -15,12 +15,100 @@ import torch
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (needed for 3d projection)
 from collections import defaultdict
 from src.models import PySRWrapper  # noqa: F401 — ensures pkl unpickling works (class lives in src.models)
 
 from config import MODEL_DIR, MODEL_CONFIG, PLOT_DIR
 from src.models import ShockAutoencoder, MixtureOfExperts, AeroSurrogate
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 3-D surface scatter — replicates ONERA createFigure_TB exactly
+# ──────────────────────────────────────────────────────────────────────────────
+
+def plot_combined_condition(X, Y, Z, Y_true, Y_pred, aeroCond, cond_idx, model_tag):
+    """
+    One figure per condition.
+    Layout: 3 rows (CFD truth | Predicted | Rel. Error) × 4 cols (Cp, Cfx, Cfy, Cfz).
+    Each cell: bottom+top 3D sub-views (ONERA style).
+    Two colorbar rows at bottom (truth scale + error scale).
+    """
+    sMinf, sAoA, pressure = aeroCond
+
+    cam = dict(elevation=90., azimuth=0., zoom=1.9,
+               xoffsets=[0., 0.], yoffsets=[0., 4.], zoffsets=[0., 0.])
+
+    xlim = (float(X.min()) + cam['xoffsets'][0], float(X.max()) + cam['xoffsets'][1])
+    ylim = (float(Y.min()) + cam['yoffsets'][0], float(Y.min()) + cam['yoffsets'][1])
+    zlim = (float(Z.min()) + cam['zoffsets'][0], float(Z.max()) + cam['zoffsets'][1])
+
+    truth_scales = [(-1, 1), (-0.002, 0.007), (-0.002, 0.007), (-0.002, 0.007)]
+    error_scales = [(0, 1.0), (0, 1.0), (0, 1.0), (0, 1.0)]
+    coeff_labels = [r'$C_p$', r'$Cf_x$', r'$Cf_y$', r'$Cf_z$']
+    row_labels   = ['CFD truth', 'Predicted', 'Rel. Error']
+
+    rel_err   = np.abs(Y_true - Y_pred) / (np.abs(Y_true) + 1e-6)
+    data_rows = [Y_true, Y_pred, rel_err]
+
+    fig = plt.figure(figsize=(16, 12))
+    fig.suptitle(
+        f'$M_\\infty$={sMinf:.2f}  AoA={sAoA:.1f}°  $p_i$={pressure:.1f}×10⁵'
+        f'  |  {model_tag}  |  cond {cond_idx}',
+        fontsize=11, fontweight='bold',
+    )
+
+    gs = gridspec.GridSpec(nrows=5, ncols=4,
+                           height_ratios=[10, 10, 10, 0.7, 0.7],
+                           hspace=0.12, wspace=0.05)
+
+    # Column headers
+    for ci, label in enumerate(coeff_labels):
+        fig.text((ci + 0.5) / 4, 0.965, label,
+                 ha='center', fontsize=11, fontweight='bold')
+
+    for row_i, (pres_arr, row_label) in enumerate(zip(data_rows, row_labels)):
+        scales = error_scales if row_i == 2 else truth_scales
+
+        # Row label (left margin)
+        fig.text(0.005, 1 - (row_i + 0.5) / 3 * 0.88 - 0.04, row_label,
+                 va='center', ha='left', fontsize=9, fontweight='bold', rotation=90)
+
+        for ci, (vmin, vmax) in enumerate(scales):
+            gs00 = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=gs[row_i, ci], wspace=0.)
+            for j in range(2):
+                ax = fig.add_subplot(gs00[0, j], projection='3d')
+                sca = ax.scatter3D(X, Y, Z, vmin=vmin, vmax=vmax, c=pres_arr[:, ci],
+                                   cmap='jet', clip_on=False, s=0.3, rasterized=True)
+                ax.view_init(elev=cam['elevation'] * (-1) ** (j + 1),
+                             azim=cam['azimuth'] + 180 * abs(j - 1))
+                ax.set(xlim=xlim, ylim=ylim, zlim=zlim)
+                ax.set_axis_off()
+                limits = np.array([getattr(ax, f'get_{axis}lim')() for axis in 'xyz'])
+                ax.set_box_aspect(np.ptp(limits, axis=1), zoom=cam['zoom'])
+
+    # Colorbar row 3: truth scale (shared for CFD + Predicted rows)
+    for ci, ((tv_min, tv_max), label) in enumerate(zip(truth_scales, coeff_labels)):
+        cax = fig.add_subplot(gs[3, ci])
+        sm  = plt.cm.ScalarMappable(cmap='jet',
+                                     norm=matplotlib.colors.Normalize(vmin=tv_min, vmax=tv_max))
+        cb  = fig.colorbar(sm, cax=cax, orientation='horizontal')
+        cb.set_label(label + ' (CFD / Pred)', size=7)
+        cb.ax.tick_params(labelsize=5)
+        cb.ax.xaxis.set_label_position('top')
+
+    # Colorbar row 4: error scale
+    for ci, ((ev_min, ev_max), label) in enumerate(zip(error_scales, coeff_labels)):
+        cax = fig.add_subplot(gs[4, ci])
+        sm  = plt.cm.ScalarMappable(cmap='jet',
+                                     norm=matplotlib.colors.Normalize(vmin=ev_min, vmax=ev_max))
+        cb  = fig.colorbar(sm, cax=cax, orientation='horizontal')
+        cb.set_label('rel. error ' + label, size=7)
+        cb.ax.tick_params(labelsize=5)
+        cb.ax.xaxis.set_label_position('top')
+
+    return fig
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -217,6 +305,133 @@ def plot_condition(fig, n_rows, row, X_phys, Cp_cfd, Cp_pred, cond, cond_idx,
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Span-cut Cp plots
+# ──────────────────────────────────────────────────────────────────────────────
+
+def plot_spancuts(X_phys, Y_true, Y_pred, cond, cond_idx,
+                 span_stations=None, band_frac=0.03, coeff_idx=0, coeff_name=r'$C_p$'):
+    """
+    For each span station η, extract a band of surface points, separate upper/lower
+    surface by nz sign, and plot truth vs predicted coefficient along the chord.
+
+    X_phys columns: 0=x, 1=y, 2=z, 3=nx, 4=ny, 5=nz, 6=Mach, 7=AoA, 14=x_norm, 15=span_norm
+    """
+    if span_stations is None:
+        span_stations = [0.20, 0.35, 0.50, 0.65, 0.80, 0.95]
+
+    # span_norm is col 15 (fitted [0=root, 1=tip])
+    span_norm = X_phys[:, 15]
+    x_norm    = X_phys[:, 14]   # chord position [0=LE, 1=TE]
+    nz        = X_phys[:, 5]    # outward normal z — positive on upper surface
+
+    true_c = Y_true[:, coeff_idx]
+    pred_c = Y_pred[:, coeff_idx]
+
+    mach, aoa, pi = cond
+    n_stations = len(span_stations)
+    ncols = min(3, n_stations)
+    nrows = (n_stations + ncols - 1) // ncols
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4 * nrows), squeeze=False)
+    fig.suptitle(
+        f'Spanwise cuts — {coeff_name} | cond {cond_idx} | '
+        f'M={mach:.2f}  AoA={aoa:.1f}°  Pi={pi:.1f}',
+        fontsize=12, fontweight='bold',
+    )
+
+    for s_idx, eta in enumerate(span_stations):
+        ax = axes[s_idx // ncols][s_idx % ncols]
+
+        # Band: span_norm within ±band_frac of eta
+        band = np.abs(span_norm - eta) < band_frac
+        if band.sum() < 20:
+            ax.set_title(f'η={eta:.2f}  (no points)', fontsize=9)
+            ax.axis('off')
+            continue
+
+        xn  = x_norm[band]
+        nz_ = nz[band]
+        tc  = true_c[band]
+        pc  = pred_c[band]
+
+        upper = nz_ >= 0
+        lower = nz_ < 0
+
+        # Bin x into N_BINS bins and take mean per bin — gives a clean line
+        # instead of a noisy scatter from the unstructured mesh
+        N_BINS  = 120
+        x_lo, x_hi = xn.min(), xn.max()
+        edges   = np.linspace(x_lo, x_hi, N_BINS + 1)
+        x_mid   = 0.5 * (edges[:-1] + edges[1:])
+
+        all_vals = []   # collect for y-axis autoscale
+
+        for mask, label, color, ls in [
+            (upper, 'upper', 'steelblue', '-'),
+            (lower, 'lower', 'steelblue', '--'),
+        ]:
+            if mask.sum() < 5:
+                continue
+            bin_idx = np.digitize(xn[mask], edges) - 1
+            bin_idx = np.clip(bin_idx, 0, N_BINS - 1)
+
+            tc_bin, pc_bin, x_bin = [], [], []
+            for b in range(N_BINS):
+                pts = bin_idx == b
+                if pts.sum() == 0:
+                    continue
+                tc_bin.append(tc[mask][pts].mean())
+                pc_bin.append(pc[mask][pts].mean())
+                x_bin.append(x_mid[b])
+
+            if not x_bin:
+                continue
+            x_bin  = np.array(x_bin)
+            tc_bin = np.array(tc_bin)
+            pc_bin = np.array(pc_bin)
+            all_vals.extend(tc_bin.tolist())
+            all_vals.extend(pc_bin.tolist())
+
+            ax.plot(x_bin, tc_bin, ls, color=color,   lw=1.8,
+                    label=f'CFD {label}')
+            ax.plot(x_bin, pc_bin, ls, color='tomato', lw=1.8, alpha=0.85,
+                    label=f'Model {label}')
+
+        # Cp_crit reference line (Mach only)
+        g = 1.4
+        sonic_ratio = (2.0 / (g + 1.0)) * (1.0 + 0.5 * (g - 1.0) * mach ** 2)
+        cp_crit = (2.0 / (g * max(mach ** 2, 1e-6))) * (sonic_ratio ** (g / (g - 1.0)) - 1.0)
+        if coeff_idx == 0:
+            ax.axhline(cp_crit, color='gray', lw=1.0, ls=':', alpha=0.7,
+                       label=r'$C_p^{\rm crit}$')
+            if all_vals:
+                all_vals.append(cp_crit)
+
+        # Y-axis: data range with 10% margin, capped at 5th/95th percentile to avoid outliers
+        if all_vals:
+            y_lo = float(np.percentile(all_vals,  2))
+            y_hi = float(np.percentile(all_vals, 98))
+            margin = 0.1 * max(abs(y_hi - y_lo), 0.01)
+            ax.set_ylim(y_lo - margin, y_hi + margin)
+
+        ax.invert_yaxis()   # aerodynamic convention: suction up
+        ax.set_xlabel(r'$x_{\rm norm}$ (chord)', fontsize=8)
+        ax.set_ylabel(coeff_name, fontsize=8)
+        ax.set_xlim(x_lo, x_hi)   # auto from actual data range, not forced 0–1
+        ax.set_title(f'η = {eta:.2f}  ({band.sum()} pts)', fontsize=9)
+        ax.legend(fontsize=7, loc='lower right')
+        ax.grid(True, alpha=0.3)
+        ax.tick_params(labelsize=7)
+
+    # Hide unused subplots
+    for s_idx in range(len(span_stations), nrows * ncols):
+        axes[s_idx // ncols][s_idx % ncols].axis('off')
+
+    plt.tight_layout()
+    return fig
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Expert specialisation diagnostics
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -321,6 +536,13 @@ def main():
                         help='Skip conditions with fewer points (default 5000)')
     parser.add_argument('--expert',     action='store_true',
                         help='Plot expert specialisation diagnostics instead of Cp comparison')
+    parser.add_argument('--3d',         action='store_true', dest='plot3d',
+                        help='3-D surface scatter (top+bottom views, all 4 coefficients)')
+    parser.add_argument('--spancut',    action='store_true',
+                        help='Plot Cp (and optionally Cfx) vs chord at several span stations')
+    parser.add_argument('--span-stations', type=float, nargs='+', default=None,
+                        metavar='ETA',
+                        help='Span stations to cut (span_norm values, default: 0.20 0.35 0.50 0.65 0.80 0.95)')
     parser.add_argument('--symbolic',   action='store_true',
                         help='Replace neural ShockIndicator with symbolic sensor (DT) for MoE gating')
     parser.add_argument('--sensor-pkl', default=None,
@@ -388,7 +610,10 @@ def main():
     Y_mean = np.array(scaler['Y_mean'])
     Y_std  = np.array(scaler['Y_std'])
 
-    # Pre-compute all predictions
+    COEFF_NAMES = [r'$C_p$', r'$C_{fx}$', r'$C_{fy}$', r'$C_{fz}$']
+    COEFF_KEYS  = ['Cp', 'Cfx', 'Cfy', 'Cfz']
+
+    # Pre-compute all predictions (store all 4 coefficients)
     results = []
     for cond in selected:
         d = data[cond]
@@ -397,43 +622,123 @@ def main():
             symbolic_sensor=symbolic_sensor,
             X_phys=d['X_phys'],
         )
-        Cp_pred = pred_norm[:, 0] * Y_std[0] + Y_mean[0]
-        results.append((d['X_phys'], d['Y_phys'][:, 0], Cp_pred, shock_prob, gate_w))
+        # Denormalise all 4 outputs
+        Y_pred_phys = pred_norm * Y_std[:4] + Y_mean[:4]   # [N, 4]
+        results.append((d['X_phys'], d['Y_phys'][:, :4], Y_pred_phys, shock_prob, gate_w))
 
     if args.expert:
-        _plot_expert_diagnostics(results, indices, selected, args.model)
+        # expert diagnostics still uses Cp (col 0) internally — rebuild compat tuple
+        compat = [(r[0], r[1][:, 0], r[2][:, 0], r[3], r[4]) for r in results]
+        _plot_expert_diagnostics(compat, indices, selected, args.model)
         return
 
-    # Global shared color scales so colors are consistent across rows
-    all_Cp  = np.concatenate([r[1] for r in results])
-    all_err = np.concatenate([r[1] - r[2] for r in results])
-    cp_lim  = (float(np.percentile(all_Cp, 2)), float(np.percentile(all_Cp, 98)))
-    err_lim = float(np.percentile(np.abs(all_err), 98))
-    print(f"Global Cp range: [{cp_lim[0]:.3f}, {cp_lim[1]:.3f}]")
-    print(f"Global error range: ±{err_lim:.4f}")
+    if args.plot3d:
+        _sensor_tag = '_symbolic' if args.symbolic else '_neural'
+        model_tag   = f'{args.model}{_sensor_tag}'
+        for idx, cond, (X_phys, Y_true, Y_pred, shock_prob, gate_w) in \
+                zip(indices, selected, results):
+            mach, aoa, pi = cond
+            X, Y, Z = X_phys[:, 0], X_phys[:, 1], X_phys[:, 2]
+            fig = plot_combined_condition(
+                X, Y, Z, Y_true, Y_pred, (mach, aoa, pi), idx, model_tag)
+            out = PLOT_DIR / f'3d_{model_tag}_cond{idx}.png'
+            fig.savefig(out, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+            print(f"Saved → {out}")
+        return
 
-    n   = len(selected)
-    fig = plt.figure(figsize=(18, 5 * n))
-
-    for row, (idx, cond, (X_phys, Cp_cfd, Cp_pred, shock_prob, gate_w)) in enumerate(zip(indices, selected, results)):
-        plot_condition(fig, n, row, X_phys, Cp_cfd, Cp_pred, cond, idx,
-                       cp_lim=cp_lim, err_lim=err_lim)
-        mae = float(np.abs(Cp_cfd - Cp_pred).mean())
-        r2  = float(1 - np.var(Cp_cfd - Cp_pred) / np.var(Cp_cfd))
-        print(f"  [{idx}] Mach={cond[0]:.2f}  AoA={cond[1]:.1f}°  Pi={cond[2]:.1f}  R²={r2:.4f}  MAE={mae:.4f}")
+    if args.spancut:
+        _sensor_tag = '_symbolic' if args.symbolic else '_neural'
+        stations = args.span_stations
+        for idx, cond, (X_phys, Y_true, Y_pred, shock_prob, gate_w) in \
+                zip(indices, selected, results):
+            for coeff_idx, (ckey, cname) in enumerate(
+                zip(['Cp', 'Cfx'], [r'$C_p$', r'$C_{fx}$'])
+            ):
+                fig = plot_spancuts(X_phys, Y_true, Y_pred, cond, idx,
+                                    span_stations=stations,
+                                    coeff_idx=coeff_idx, coeff_name=cname)
+                out = PLOT_DIR / (
+                    f'spancut_{ckey.lower()}_{args.model}{_sensor_tag}'
+                    f'_cond{idx}.png'
+                )
+                fig.savefig(out, dpi=150, bbox_inches='tight')
+                plt.close(fig)
+                print(f"Saved → {out}")
+        return
 
     sensor_tag = '_symbolic' if args.symbolic else '_neural'
-    fig.suptitle(
-        f'Full-aircraft Cp inference | {args.model} | sensor={sensor_tag.strip("_")}',
-        fontsize=13, fontweight='bold', y=1.002,
-    )
-    plt.tight_layout()
+    idx_str    = '_'.join(str(i) for i in indices)
+    n          = len(selected)
 
-    idx_str = '_'.join(str(i) for i in indices)
-    out = PLOT_DIR / f'cp_comparison_{args.model}{sensor_tag}_cond{idx_str}.png'
-    fig.savefig(out, dpi=150, bbox_inches='tight')
-    plt.close(fig)
-    print(f"\nSaved → {out}")
+    pastel_err = matplotlib.colors.LinearSegmentedColormap.from_list(
+        'pastel_err', ['#3a78b5', 'white', '#c94040'])
+
+    # One figure per coefficient — shared color scales within each coefficient
+    for coeff_idx, (cname, ckey) in enumerate(zip(COEFF_NAMES, COEFF_KEYS)):
+        # Global scale for this coefficient (same across all conditions)
+        all_true = np.concatenate([r[1][:, coeff_idx] for r in results])
+        all_pred = np.concatenate([r[2][:, coeff_idx] for r in results])
+        all_err  = all_true - all_pred
+        val_lim  = (float(np.percentile(all_true, 2)), float(np.percentile(all_true, 98)))
+        err_lim  = float(np.percentile(np.abs(all_err), 98))
+        print(f"\n{ckey} | val range [{val_lim[0]:.4f}, {val_lim[1]:.4f}] | err ±{err_lim:.4f}")
+
+        fig, axes = plt.subplots(n, 3, figsize=(18, 5 * n),
+                                 squeeze=False)
+
+        for row, (idx, cond, (X_phys, Y_true, Y_pred, shock_prob, gate_w)) in \
+                enumerate(zip(indices, selected, results)):
+
+            x = X_phys[:, 0]
+            y = X_phys[:, 1]
+            true_c = Y_true[:, coeff_idx]
+            pred_c = Y_pred[:, coeff_idx]
+            err_c  = true_c - pred_c
+            mae    = float(np.abs(err_c).mean())
+            r2     = float(1 - np.var(err_c) / (np.var(true_c) + 1e-12))
+
+            mach, aoa, pi = cond
+            kw = dict(s=1, alpha=0.9, rasterized=True, linewidths=0)
+
+            sc1 = axes[row, 0].scatter(x, y, c=true_c, cmap='jet',
+                                       vmin=val_lim[0], vmax=val_lim[1], **kw)
+            sc2 = axes[row, 1].scatter(x, y, c=pred_c, cmap='jet',
+                                       vmin=val_lim[0], vmax=val_lim[1], **kw)
+            sc3 = axes[row, 2].scatter(x, y, c=err_c,  cmap=pastel_err,
+                                       vmin=-err_lim,   vmax=err_lim,    **kw)
+
+            axes[row, 0].set_title(f'Truth {cname}', fontsize=9)
+            axes[row, 1].set_title(
+                f'cond {idx} | M={mach:.2f} AoA={aoa:.1f}° Pi={pi:.1f} | '
+                f'R²={r2:.4f} MAE={mae:.4f}',
+                fontsize=8,
+            )
+            axes[row, 2].set_title(f'Error {cname}', fontsize=9)
+
+            for ax, sc, label in [
+                (axes[row, 0], sc1, cname),
+                (axes[row, 1], sc2, cname),
+                (axes[row, 2], sc3, 'Error'),
+            ]:
+                plt.colorbar(sc, ax=ax, orientation='horizontal',
+                             pad=0.03, fraction=0.046, label=label)
+                ax.set_xticks([]); ax.set_yticks([])
+                ax.set_aspect('equal', adjustable='datalim')
+                for sp in ax.spines.values():
+                    sp.set_visible(False)
+
+            print(f"  [{idx}] M={mach:.2f} AoA={aoa:.1f}° {ckey}: R²={r2:.4f} MAE={mae:.4f}")
+
+        fig.suptitle(
+            f'{ckey} inference | {args.model} | sensor={sensor_tag.strip("_")}',
+            fontsize=13, fontweight='bold', y=1.002,
+        )
+        plt.tight_layout()
+        out = PLOT_DIR / f'{ckey.lower()}_comparison_{args.model}{sensor_tag}_cond{idx_str}.png'
+        fig.savefig(out, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        print(f"Saved → {out}")
 
 
 if __name__ == '__main__':

@@ -11,10 +11,29 @@ logger = logging.getLogger(__name__)
 
 
 class ModelEvaluator:
-    def __init__(self, model, device='cpu', is_autoencoder=False):
+    def __init__(self, model, device='cpu', is_autoencoder=False,
+                 symbolic_sensor=None, scaler=None):
         self.model          = model
         self.device         = device
         self.is_autoencoder = is_autoencoder
+        self.symbolic_sensor = symbolic_sensor
+        if symbolic_sensor is not None:
+            assert scaler is not None, "scaler required when symbolic_sensor is provided"
+            self._X_std  = torch.tensor(scaler['X_std'],  dtype=torch.float32)
+            self._X_mean = torch.tensor(scaler['X_mean'], dtype=torch.float32)
+
+    def _forward(self, X_batch):
+        """Forward pass: symbolic_sensor overrides neural ShockIndicator if provided."""
+        if self.symbolic_sensor is not None:
+            import numpy as np
+            X_raw  = (X_batch.cpu() * self._X_std + self._X_mean).numpy()
+            sr_idx = self.symbolic_sensor['sr_idx']
+            proba  = self.symbolic_sensor['clf'].predict_proba(X_raw[:, sr_idx])[:, 1]
+            sp_cal = self.symbolic_sensor['calibrator'].predict(proba).astype(np.float32)
+            sp_t   = torch.from_numpy(sp_cal[:, None]).to(self.device)
+            pred, gates = self.model.moe(X_batch, sp_t)
+            return {'pred': pred, 'gate_weights': gates}
+        return self.model(X_batch)
 
     @torch.no_grad()
     def evaluate(self, test_loader, return_predictions=False):
@@ -23,7 +42,7 @@ class ModelEvaluator:
 
         for X_batch, Y_batch in test_loader:
             X_batch = X_batch.to(self.device)
-            output  = self.model(X_batch)
+            output  = self._forward(X_batch)
 
             if isinstance(output, tuple):
                 y_pred = output[0]
