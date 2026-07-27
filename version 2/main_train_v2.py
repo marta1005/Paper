@@ -21,6 +21,7 @@ import random
 import numpy as np
 import torch
 import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 from pathlib import Path
 
 # Make sure imports resolve from this directory
