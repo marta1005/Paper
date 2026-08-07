@@ -14,6 +14,8 @@ Env vars:
   V2_KNN_K=8              kNN k (must match build_knn_cache.py)
 """
 import os
+# Must be set before importing torch — prevents fragmentation OOM on large graphs
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
 import sys
 import logging
 import argparse

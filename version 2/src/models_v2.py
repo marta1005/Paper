@@ -14,6 +14,7 @@ Output: y_pred = [Cp, Cfx, Cfy, Cfz]  (compatible con protocolo de evaluación d
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -85,19 +86,27 @@ class GNNBackbone(nn.Module):
     edge_attr   [E, 5]   (dx, dy, dz, dist, n_dot)
     """
     def __init__(self, node_in=16, edge_in=5, node_enc_dim=128,
-                 d=256, edge_enc_dim=128, n_layers=8, dropout=0.1):
+                 d=256, edge_enc_dim=128, n_layers=8, dropout=0.1,
+                 use_checkpoint=True):
         super().__init__()
-        self.node_encoder = _mlp([node_in, node_enc_dim, d], dropout=dropout)
-        self.edge_encoder = _mlp([edge_in, 64, edge_enc_dim], dropout=dropout)
-        self.layers = nn.ModuleList([
+        self.node_encoder    = _mlp([node_in, node_enc_dim, d], dropout=dropout)
+        self.edge_encoder    = _mlp([edge_in, 64, edge_enc_dim], dropout=dropout)
+        self.layers          = nn.ModuleList([
             GNNLayer(d, edge_enc_dim, dropout) for _ in range(n_layers)
         ])
+        self.use_checkpoint  = use_checkpoint
 
     def forward(self, x, edge_index, edge_attr):
         h        = self.node_encoder(x)                  # [N, d]
         edge_enc = self.edge_encoder(edge_attr)           # [E, edge_enc_dim]
         for layer in self.layers:
-            h = layer(h, edge_index, edge_enc)
+            if self.use_checkpoint and self.training:
+                # Re-compute activations on backward instead of storing them.
+                # Reduces peak memory from O(n_layers) to O(1) at cost of one
+                # extra forward pass per layer during backward.
+                h = grad_checkpoint(layer, h, edge_index, edge_enc, use_reentrant=False)
+            else:
+                h = layer(h, edge_index, edge_enc)
         return h                                          # [N, d]
 
 
