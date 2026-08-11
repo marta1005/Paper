@@ -108,10 +108,26 @@ def main():
     print('  ' + f'{"":12}' + ''.join(f'{f"E{i}":>10}' for i in range(n_experts)))
     print('  ' + f'{"shock=1":12}' + ''.join(f'{gates[shock,i].mean():10.4f}'  for i in range(n_experts)))
     print('  ' + f'{"shock=0":12}' + ''.join(f'{gates[~shock,i].mean():10.4f}' for i in range(n_experts)))
-    ent = -(gates * np.log(gates + 1e-12)).sum(1)
-    print(f'  mean entropy = {ent.mean():.4f}   (max = {np.log(n_experts):.4f} uniform, 0 = collapsed)')
+    hmax = np.log(n_experts)
+    # Two distinct quantities, both needed to judge the MoE:
+    #   - load balance: entropy of the MEAN gate. This is what the L_lb term in
+    #     the loss maximises. Near hmax = all experts carry a similar share.
+    #   - routing sharpness: MEAN of the per-node entropies. Near 0 = each node
+    #     commits to a single expert, which is healthy hard routing, NOT collapse.
+    # Collapse is load balance near 0; sharp routing with balanced load is fine.
+    mean_gate = gates.mean(0)
+    h_load    = -(mean_gate * np.log(mean_gate + 1e-12)).sum()
+    h_node    = -(gates * np.log(gates + 1e-12)).sum(1).mean()
+    print(f'  load balance   (entropy of mean gate) = {h_load:.4f} / {hmax:.4f}'
+          f'   -> {100*h_load/hmax:.1f}% of uniform')
+    print(f'  routing sharpness (mean per-node entropy) = {h_node:.4f} / {hmax:.4f}'
+          f'   (near 0 = each node picks one expert)')
     dead = [i for i in range(n_experts) if gates[:, i].mean() < 0.01]
     print(f'  experts with <1% mean usage: {dead if dead else "none"}')
+    # Specialisation: does the gate route shock nodes differently at all?
+    tv = 0.5 * np.abs(gates[shock].mean(0) - gates[~shock].mean(0)).sum()
+    print(f'  shock specialisation (total variation shock vs non-shock) = {tv:.4f}'
+          f'   (0 = gate ignores shock, 1 = fully disjoint experts)')
 
     print(f'\n[3] SHOCK RESIDUAL  p_s * shock_expert(h)   [Cp units]')
     print(f'  mean |resid| | shock=1 : {np.abs(resid[shock]).mean():.6f}')
