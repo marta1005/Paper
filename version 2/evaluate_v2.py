@@ -18,6 +18,20 @@ import numpy as np
 import torch
 from pathlib import Path
 
+
+class _Tee:
+    """Duplicates writes to stdout and a log file simultaneously."""
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+
+    def flush(self):
+        for s in self.streams:
+            s.flush()
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import (DATA_DIR, CACHE_DIR, MODEL_DIR, RESULT_DIR,
@@ -137,6 +151,20 @@ def main():
     parser.add_argument('--compare-v1', action='store_true')
     args = parser.parse_args()
 
+    RESULT_DIR.mkdir(parents=True, exist_ok=True)
+    out_path    = RESULT_DIR / 'v2_evaluation.txt'
+    log_file    = open(out_path, 'w')
+    real_stdout = sys.stdout
+    sys.stdout  = _Tee(real_stdout, log_file)
+    try:
+        _run(args, out_path)
+    finally:
+        sys.stdout = real_stdout
+        log_file.close()
+    print(f'\nResults saved to {out_path}')
+
+
+def _run(args, out_path):
     device    = torch.device('cpu')
     ckpt_path = Path(args.ckpt) if args.ckpt else MODEL_DIR / 'surrogate_v2_best.pt'
     print(f"Checkpoint: {ckpt_path}")
@@ -177,11 +205,6 @@ def main():
     print_table(Y_true[idx_samp], Y_pred[idx_samp], X_phys[idx_samp],
                 f'AeroSurrogate v2 — v1-comparable sample ({n_samp:,} pts, '
                 f'SEED={SEED}, frac={TEST_FRACTION})')
-
-    # Save results
-    RESULT_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = RESULT_DIR / 'v2_evaluation.txt'
-    print(f'\nResults saved to {out_path}')
 
 
 if __name__ == '__main__':
