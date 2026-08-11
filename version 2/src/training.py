@@ -78,7 +78,11 @@ def compute_loss(output, batch, cfg, scaler, device):
         shock_logit.squeeze(1), y_shock, pos_weight=pos_weight
     )
 
-    # 3. Load-balancing: encourage uniform usage across experts
+    # 3. Load-balancing: encourage uniform usage across experts.
+    # L_lb is the entropy of the mean gate: maximal (log num_experts) when all
+    # experts are used equally, 0 when the gate collapses onto one expert.
+    # It is SUBTRACTED from the total below so that minimising the loss
+    # maximises the entropy. Adding it collapses the MoE onto a single expert.
     mean_gate = gate_w.mean(dim=0)                          # [num_experts]
     L_lb      = (mean_gate * torch.log(mean_gate + 1e-8)).sum().neg()   # entropy
 
@@ -90,7 +94,7 @@ def compute_loss(output, batch, cfg, scaler, device):
 
     total = (L_cp
              + moe_cfg['shock_weight']        * L_shock
-             + moe_cfg['load_balance_weight'] * L_lb
+             - moe_cfg['load_balance_weight'] * L_lb
              + fric_cfg['loss_weight']        * L_fric)
 
     return total, {
