@@ -127,6 +127,10 @@ def main():
     parser.add_argument('--resume', default=None, metavar='PT',
                         help='Resume from checkpoint')
     parser.add_argument('--save-name', default='surrogate_v2_best.pt')
+    parser.add_argument('--freeze-backbone', action='store_true',
+                        help='Freeze the GNN backbone and train only the heads '
+                             '(shock indicator, MoE, friction). Use with --resume '
+                             'to fine-tune the heads from a trained checkpoint.')
     parser.add_argument('--val-sims',  type=int, default=None,
                         help='Number of sims to use for validation (default: all test sims)')
     args = parser.parse_args()
@@ -178,6 +182,18 @@ def main():
         sd = torch.load(args.resume, map_location=device, weights_only=False)
         model.load_state_dict(sd, strict=False)
         logger.info(f"Resumed from {args.resume}")
+
+    if args.freeze_backbone:
+        # Must happen before DDP wraps the model and before the optimizer is
+        # built, so the frozen params stay out of the reducer and the optimizer.
+        for p in model.backbone.parameters():
+            p.requires_grad = False
+        # Gradient checkpointing only pays off when the backbone needs a
+        # backward pass; with it frozen the recompute is pure overhead.
+        model.backbone.use_checkpoint = False
+        n_frozen = sum(p.numel() for p in model.backbone.parameters())
+        if is_main:
+            logger.info(f"Backbone frozen ({n_frozen:,} params); training heads only")
 
     if world_size > 1:
         model = DDP(model, device_ids=[rank], find_unused_parameters=False)

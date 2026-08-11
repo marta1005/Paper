@@ -122,8 +122,12 @@ class Surrogatev2Trainer:
         self.is_main    = (rank == 0)
 
         train_cfg = cfg['training']
+        # Only optimise trainable params, so --freeze-backbone genuinely keeps
+        # the backbone out of AdamW (and out of its optimiser state).
+        self.backbone_frozen = not any(p.requires_grad
+                                       for p in model.backbone.parameters())
         self.optimizer = optim.AdamW(
-            model.parameters(),
+            [p for p in model.parameters() if p.requires_grad],
             lr=train_cfg['learning_rate'],
             weight_decay=train_cfg['weight_decay'],
         )
@@ -160,6 +164,10 @@ class Surrogatev2Trainer:
 
     def train_epoch(self, loader, epoch):
         self.model.train()
+        if self.backbone_frozen:
+            # Keep dropout/norm in the frozen backbone deterministic — its
+            # features no longer adapt, so training noise there is pure noise.
+            self.model.backbone.eval()
         self._set_tau(epoch)
         self._warmup_lr(epoch)
 
