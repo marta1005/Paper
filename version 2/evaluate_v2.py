@@ -149,10 +149,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--ckpt', default=None)
     parser.add_argument('--compare-v1', action='store_true')
+    parser.add_argument('--out', default=None, metavar='TXT',
+                        help='Where to write the report. Defaults to a name derived '
+                             'from the checkpoint, so evaluating different '
+                             'checkpoints never overwrites a previous report.')
     args = parser.parse_args()
 
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
-    out_path    = RESULT_DIR / 'v2_evaluation.txt'
+    ckpt_stem = Path(args.ckpt).stem if args.ckpt else 'surrogate_v2_best'
+    out_path  = (Path(args.out) if args.out
+                 else RESULT_DIR / f'{ckpt_stem}_evaluation.txt')
     log_file    = open(out_path, 'w')
     real_stdout = sys.stdout
     sys.stdout  = _Tee(real_stdout, log_file)

@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config import (DATA_DIR, CACHE_DIR, MODEL_DIR, RESULT_DIR,
                     MODEL_CONFIG, TRAINING_CONFIG, PREPROCESSING_CONFIG,
-                    SEED, KNN_K, N_P, N_TRAIN, N_TEST)
+                    LOGGING_CONFIG, SEED, KNN_K, N_P, N_TRAIN, N_TEST)
 from src.preprocessing import CFDPreprocessor
 from src.models_v2 import AeroSurrogatev2
 from src.dataset import SimulationDataset, load_sim_weights, collate_single
@@ -145,6 +145,19 @@ def main():
                         format='%(asctime)s %(levelname)s %(message)s',
                         datefmt='%H:%M:%S')
     logger = logging.getLogger(__name__)
+
+    # Persist the log. Without this the whole training curve lives only in
+    # whatever captured stderr, and is lost once the job's output is gone.
+    # One file per --save-name, so runs never overwrite each other's history.
+    if is_main:
+        log_path = LOGGING_CONFIG['log_file'].with_name(
+            f"training_{Path(args.save_name).stem}.log")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(log_path, mode='w')
+        fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s',
+                                          datefmt='%H:%M:%S'))
+        logging.getLogger().addHandler(fh)
+        logger.info(f"Logging to {log_path}")
 
     if is_main:
         logger.info(f"AeroSurrogate v2 — rank {rank}/{world_size} — device {device}")

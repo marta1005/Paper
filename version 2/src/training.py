@@ -171,7 +171,7 @@ class Surrogatev2Trainer:
         self._set_tau(epoch)
         self._warmup_lr(epoch)
 
-        totals = {'loss': 0, 'L_cp': 0, 'L_shock': 0, 'L_fric': 0}
+        totals = {'loss': 0, 'L_cp': 0, 'L_shock': 0, 'L_lb': 0, 'L_fric': 0}
         n_sims = 0
 
         for batch in loader:
@@ -270,6 +270,7 @@ class Surrogatev2Trainer:
                 logger.info(
                     f"Epoch {epoch+1:3d}/{self.num_epochs}  "
                     f"loss={ld['loss']:.4f}  L_cp={ld['L_cp']:.4f}  "
+                    f"L_shock={ld['L_shock']:.4f}  L_lb={ld['L_lb']:.4f}  "
                     f"L_fric={ld['L_fric']:.4f}  lr={lr:.2e}  t={dt:.0f}s"
                 )
 
