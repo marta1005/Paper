@@ -35,7 +35,7 @@ class _Tee:
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import (DATA_DIR, CACHE_DIR, MODEL_DIR, RESULT_DIR,
-                    MODEL_CONFIG, KNN_K, N_P, N_TEST, SEED)
+                    MODEL_CONFIG, TRAINING_CONFIG, KNN_K, N_P, N_TEST, SEED)
 from src.preprocessing import CFDPreprocessor
 from src.models_v2 import AeroSurrogatev2
 from src.dataset import SimulationDataset, load_sim_weights
@@ -55,17 +55,27 @@ def mae_score(y_true, y_pred):
     return np.abs(y_true - y_pred).mean(axis=0)
 
 
+def validation_sim_indices():
+    """The test sims early stopping used — reproduced exactly from SEED."""
+    rng = np.random.default_rng(SEED)
+    return sorted(rng.choice(N_TEST, TRAINING_CONFIG['val_sims'],
+                             replace=False).tolist())
+
+
 @torch.no_grad()
-def evaluate_full(model, test_ds, scaler, device):
-    """Evaluate on all 156 test simulations."""
+def evaluate_full(model, test_ds, scaler, device, sim_indices=None):
+    """Evaluate on the given test simulations (default: all 156)."""
     model.eval()
     Y_std  = np.array(scaler['Y_std'],  dtype=np.float32)
     Y_mean = np.array(scaler['Y_mean'], dtype=np.float32)
 
+    if sim_indices is None:
+        sim_indices = list(range(len(test_ds)))
+
     all_y_true, all_y_pred = [], []
     all_x_phys             = []
 
-    for idx in range(len(test_ds)):
+    for n, idx in enumerate(sim_indices):
         batch      = test_ds[idx]
         x          = batch['x'].to(device)
         edge_index = batch['edge_index'].to(device)
@@ -86,8 +96,8 @@ def evaluate_full(model, test_ds, scaler, device):
         all_y_pred.append(y_pred_phys)
         all_x_phys.append(x_phys)
 
-        if (idx + 1) % 20 == 0:
-            print(f"  Evaluated {idx+1}/{len(test_ds)} sims")
+        if (n + 1) % 20 == 0:
+            print(f"  Evaluated {n+1}/{len(sim_indices)} sims")
 
     Y_true = np.vstack(all_y_true)     # [N_test_total, 4]
     Y_pred = np.vstack(all_y_pred)
@@ -132,12 +142,18 @@ def print_table(Y_true, Y_pred, X_phys, label):
     return masks
 
 
-def weighted_r2(Y_true, Y_pred, X_phys, test_ds):
-    """ONERA-comparable weighted R² using confidence_weight_simple per sim."""
+def weighted_r2(Y_true, Y_pred, X_phys, test_ds, sim_indices=None):
+    """ONERA-comparable weighted R² using confidence_weight_simple per sim.
+
+    Rows are stacked in the order the sims were evaluated, so block n holds
+    sim_indices[n] — not sim n — whenever a subset was evaluated.
+    """
+    if sim_indices is None:
+        sim_indices = list(range(N_TEST))
     ss_res_w = np.zeros(4)
     ss_tot_w = np.zeros(4)
-    for s in range(N_TEST):
-        sl     = slice(s * N_P, (s + 1) * N_P)
+    for n, s in enumerate(sim_indices):
+        sl     = slice(n * N_P, (n + 1) * N_P)
         yt, yp = Y_true[sl], Y_pred[sl]
         w      = float(test_ds.sim_weights.get(s, 1.0))
         ss_res_w += w * np.sum((yt - yp) ** 2, axis=0)
@@ -153,6 +169,12 @@ def main():
                         help='Where to write the report. Defaults to a name derived '
                              'from the checkpoint, so evaluating different '
                              'checkpoints never overwrites a previous report.')
+    parser.add_argument('--exclude-val-sims', action='store_true',
+                        help='Drop the simulations used for validation during '
+                             'training. Early stopping selected the checkpoint on '
+                             'those sims, so including them makes the reported '
+                             'metrics optimistic. Use this for the numbers you '
+                             'publish.')
     args = parser.parse_args()
 
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
@@ -192,13 +214,27 @@ def _run(args, out_path):
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
 
-    print("\nEvaluating on full test set (156 sims × 260,774 nodes)...")
-    Y_true, Y_pred, X_phys = evaluate_full(model, test_ds, scaler, device)
+    if args.exclude_val_sims:
+        val_idx     = validation_sim_indices()
+        sim_indices = [i for i in range(len(test_ds)) if i not in set(val_idx)]
+        label       = 'held-out test set'
+        print(f"\nExcluding the {len(val_idx)} sims early stopping selected on: {val_idx}")
+        print(f"Evaluating on the remaining {len(sim_indices)} sims × {N_P:,} nodes...")
+    else:
+        val_idx     = None
+        sim_indices = list(range(len(test_ds)))
+        label       = 'full test set'
+        print(f"\nEvaluating on full test set ({len(sim_indices)} sims × {N_P:,} nodes)...")
+        print("NOTE: includes the 16 sims early stopping selected on — "
+              "pass --exclude-val-sims for unbiased numbers.")
 
-    print_table(Y_true, Y_pred, X_phys, f'AeroSurrogate v2 — full test set ({len(Y_true):,} pts)')
+    Y_true, Y_pred, X_phys = evaluate_full(model, test_ds, scaler, device, sim_indices)
+
+    print_table(Y_true, Y_pred, X_phys,
+                f'AeroSurrogate v2 — {label} ({len(Y_true):,} pts)')
 
     # Weighted R² (ONERA metric)
-    r2_w = weighted_r2(Y_true, Y_pred, X_phys, test_ds)
+    r2_w = weighted_r2(Y_true, Y_pred, X_phys, test_ds, sim_indices)
     print(f'\nWeighted R² (confidence_weight):  ' +
           '  '.join(f'R²({c})={r2_w[i]:.4f}' for i, c in enumerate(COEFF_NAMES)))
 
