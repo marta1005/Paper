@@ -216,11 +216,15 @@ def main():
         logger.info(f"Parameters: {n_params:,}")
 
     # ── train
+    # Pass the DDP wrapper as the training model — gradients are only
+    # all-reduced when DDP.forward() runs, so training through model.module
+    # would silently leave every rank optimising its own shard alone.
     raw_model = model.module if world_size > 1 else model
     trainer   = Surrogatev2Trainer(
-        raw_model, cfg, scaler, device,
+        model, cfg, scaler, device,
         save_name=args.save_name,
         rank=rank, world_size=world_size,
+        raw_model=raw_model,
     )
 
     best_r2 = trainer.train(

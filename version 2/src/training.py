@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, RandomSampler
 from pathlib import Path
@@ -111,8 +112,14 @@ def compute_loss(output, batch, cfg, scaler, device):
 class Surrogatev2Trainer:
     def __init__(self, model, cfg, scaler, device,
                  save_name='surrogate_v2_best.pt',
-                 rank=0, world_size=1):
+                 rank=0, world_size=1, raw_model=None):
+        # `model` must be the DDP wrapper under DDP: gradients are only
+        # all-reduced when DDP.forward() runs, so training MUST go through it.
+        # `raw` is the underlying module, for attribute access (backbone, moe),
+        # for state_dict (no "module." prefix), and for rank-0-only validation
+        # — calling DDP.forward() on one rank alone would desync the group.
         self.model      = model
+        self.raw        = raw_model if raw_model is not None else model
         self.cfg        = cfg
         self.scaler     = scaler
         self.device     = device
@@ -125,9 +132,9 @@ class Surrogatev2Trainer:
         # Only optimise trainable params, so --freeze-backbone genuinely keeps
         # the backbone out of AdamW (and out of its optimiser state).
         self.backbone_frozen = not any(p.requires_grad
-                                       for p in model.backbone.parameters())
+                                       for p in self.raw.backbone.parameters())
         self.optimizer = optim.AdamW(
-            [p for p in model.parameters() if p.requires_grad],
+            [p for p in self.raw.parameters() if p.requires_grad],
             lr=train_cfg['learning_rate'],
             weight_decay=train_cfg['weight_decay'],
         )
@@ -154,7 +161,7 @@ class Surrogatev2Trainer:
     def _set_tau(self, epoch):
         frac = min(epoch / max(self.num_epochs - 1, 1), 1.0)
         tau  = self.tau_start + frac * (self.tau_end - self.tau_start)
-        self.model.moe.tau.fill_(tau)
+        self.raw.moe.tau.fill_(tau)
 
     def _warmup_lr(self, epoch):
         if epoch < self.warmup_steps:
@@ -167,7 +174,7 @@ class Surrogatev2Trainer:
         if self.backbone_frozen:
             # Keep dropout/norm in the frozen backbone deterministic — its
             # features no longer adapt, so training noise there is pure noise.
-            self.model.backbone.eval()
+            self.raw.backbone.eval()
         self._set_tau(epoch)
         self._warmup_lr(epoch)
 
@@ -183,7 +190,7 @@ class Surrogatev2Trainer:
             output = self.model(x, edge_index, edge_attr)
             loss, ld = compute_loss(output, batch, self.cfg['model'], self.scaler, self.device)
             loss.backward()
-            nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+            nn.utils.clip_grad_norm_(self.raw.parameters(), self.grad_clip)
             self.optimizer.step()
 
             for k in totals:
@@ -197,8 +204,12 @@ class Surrogatev2Trainer:
 
     @torch.no_grad()
     def validate(self, val_dataset, val_sim_indices):
-        """Quick validation on a subset of simulations."""
-        self.model.eval()
+        """Quick validation on a subset of simulations.
+
+        Runs on rank 0 only, so it goes through self.raw: DDP.forward() on a
+        single rank would leave the other ranks waiting on a collective.
+        """
+        self.raw.eval()
         all_cp_true, all_cp_pred = [], []
         all_cf_true, all_cf_pred = [], []
 
@@ -212,7 +223,7 @@ class Surrogatev2Trainer:
             edge_index = batch['edge_index'].to(self.device)
             edge_attr  = batch['edge_attr'].to(self.device)
 
-            out    = self.model(x, edge_index, edge_attr)
+            out    = self.raw(x, edge_index, edge_attr)
             cp_n   = out['cp_pred'].squeeze(1).cpu().numpy()
             cf_n   = out['cf_pred'].cpu().numpy()
 
@@ -274,23 +285,35 @@ class Surrogatev2Trainer:
                     f"L_fric={ld['L_fric']:.4f}  lr={lr:.2e}  t={dt:.0f}s"
                 )
 
-            if self.is_main and (epoch + 1) % validate_every == 0:
-                r2_cp, r2_cf = self.validate(val_dataset, val_sim_indices)
-                logger.info(
-                    f"  Val  R²(Cp)={r2_cp:.4f}  "
-                    f"R²(Cfx)={r2_cf[0]:.4f}  R²(Cfy)={r2_cf[1]:.4f}  R²(Cfz)={r2_cf[2]:.4f}"
-                )
+            if (epoch + 1) % validate_every == 0:
+                stop = False
+                if self.is_main:
+                    r2_cp, r2_cf = self.validate(val_dataset, val_sim_indices)
+                    logger.info(
+                        f"  Val  R²(Cp)={r2_cp:.4f}  "
+                        f"R²(Cfx)={r2_cf[0]:.4f}  R²(Cfy)={r2_cf[1]:.4f}  R²(Cfz)={r2_cf[2]:.4f}"
+                    )
 
-                if r2_cp > self.best_r2:
-                    self.best_r2     = r2_cp
-                    self.patience_cnt = 0
-                    save_path = model_dir / self.save_name
-                    torch.save(self.model.state_dict(), save_path)
-                    logger.info(f"  → Saved best model (R²(Cp)={r2_cp:.4f}) to {save_path}")
-                else:
-                    self.patience_cnt += 1
-                    if self.patience_cnt >= self.patience:
-                        logger.info(f"Early stopping at epoch {epoch+1}")
-                        break
+                    if r2_cp > self.best_r2:
+                        self.best_r2     = r2_cp
+                        self.patience_cnt = 0
+                        save_path = model_dir / self.save_name
+                        torch.save(self.raw.state_dict(), save_path)
+                        logger.info(f"  → Saved best model (R²(Cp)={r2_cp:.4f}) to {save_path}")
+                    else:
+                        self.patience_cnt += 1
+                        stop = self.patience_cnt >= self.patience
+                        if stop:
+                            logger.info(f"Early stopping at epoch {epoch+1}")
+
+                # Only rank 0 evaluates, so the stop decision has to reach the
+                # others — otherwise they keep training and hang the group on
+                # the next collective.
+                if self.world_size > 1:
+                    flag = torch.tensor([int(stop)], device=self.device)
+                    dist.broadcast(flag, src=0)
+                    stop = bool(flag.item())
+                if stop:
+                    break
 
         return self.best_r2
