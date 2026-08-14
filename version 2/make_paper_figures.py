@@ -464,6 +464,77 @@ def plot_surface_fields(coords, fields, cond, sim, field_lims, err_lims,
 # Figure 2 — parity
 # ──────────────────────────────────────────────────────────────────────────────
 
+def plot_combined_conditions(results, sims, coeff, field_lim, err_lim,
+                             y_halfwidth, model_tag='AeroSurrogate v2'):
+    """One figure, one row per flight condition, columns CFD | model | error.
+
+    This is the v1 ``cp_comparison_conditions`` layout, with one change: v1 gave
+    every row its own pair of colorbars, which silently rescaled each condition
+    and made the rows impossible to read against each other — a row could look
+    identical to its neighbour while spanning half the Cp range.  Here all rows
+    share one field scale and one error scale, so a redder error panel really
+    does mean a worse prediction.
+    """
+    key      = 'cp' if coeff == 'Cp' else 'cf'
+    label    = r'$C_p$' if coeff == 'Cp' else r'$|C_f|$'
+    n_row    = len(sims)
+    n_col    = 3
+    col_labels = ['CFD truth', model_tag, 'Error (CFD $-$ model)']
+
+    X, Y, Z = results['_coords']
+    xlim = (float(X.min()) + CAM['xoffsets'][0], float(X.max()) + CAM['xoffsets'][1])
+    ylim = (float(Y.min()), float(Y.min()) + y_halfwidth)
+    zlim = (float(Z.min()) + CAM['zoffsets'][0], float(Z.max()) + CAM['zoffsets'][1])
+
+    grid = dict(GRID)
+    grid.update(top=0.945, bottom=0.085 if n_row > 3 else 0.145)
+
+    fig = plt.figure(figsize=(CELL_W * n_col, CELL_H * n_row))
+    fig.suptitle(f'{model_tag} — {label} across the Mach envelope  '
+                 f'(shared colour scale)',
+                 fontsize=13, fontweight='bold', y=0.985)
+    gs = gridspec.GridSpec(n_row, n_col, figure=fig, **grid)
+
+    for ci, txt in enumerate(col_labels):
+        fig.text(grid['left'] + (ci + 0.5) * (grid['right'] - grid['left']) / n_col,
+                 grid['top'] + 0.012, txt, ha='center', va='bottom',
+                 fontsize=11, fontweight='bold')
+
+    row_h = (grid['top'] - grid['bottom']) / n_row
+    for row_i, s in enumerate(sims):
+        res  = results[s]
+        cond = res['cond']
+        cells = [(res[f'{key}_true'], 'jet', field_lim),
+                 (res[f'{key}_pred'], 'jet', field_lim),
+                 (res[f'{key}_true'] - res[f'{key}_pred'], PASTEL_ERR,
+                  (-err_lim, err_lim))]
+        fig.text(0.012, grid['top'] - (row_i + 0.5) * row_h,
+                 f'$M_\\infty$={cond["Mach"]:.2f}  AoA={cond["AoA"]:.1f}°  '
+                 f'$p_i$={cond["Pi"]:.1f}×10⁵\nsim {s}   shock '
+                 f'{100 * res["shock_true"].mean():.1f}%',
+                 va='center', ha='center', fontsize=9, rotation=90)
+        for ci, (values, cmap, (vmin, vmax)) in enumerate(cells):
+            _draw_pair(fig, gs[row_i, ci], X, Y, Z, values, cmap, vmin, vmax,
+                       (xlim, ylim, zlim), annotate=(row_i == 0))
+
+    col_w = (grid['right'] - grid['left']) / n_col
+    bars = [(0, 2, 'jet', field_lim, f'{label} (CFD / model)'),
+            (2, 1, PASTEL_ERR, (-err_lim, err_lim),
+             f'error {label} (CFD $-$ model)')]
+    for ci, span, cmap, (vmin, vmax), txt in bars:
+        cax = fig.add_axes([grid['left'] + (ci + 0.18) * col_w,
+                            0.030 if n_row > 3 else 0.055,
+                            (span - 0.36) * col_w, 0.009])
+        sm  = plt.cm.ScalarMappable(
+            cmap=cmap, norm=matplotlib.colors.Normalize(vmin=vmin, vmax=vmax))
+        cb  = fig.colorbar(sm, cax=cax, orientation='horizontal')
+        cb.set_label(txt, size=9)
+        cb.ax.tick_params(labelsize=7)
+        cb.ax.xaxis.set_label_position('top')
+
+    return fig
+
+
 def plot_parity(Y_true, Y_pred, sims, model_tag='AeroSurrogate v2',
                 max_points=200_000, clip_pct=99.9, seed=SEED):
     """2x2 parity, one panel per coefficient, in PHYSICAL units.
@@ -583,6 +654,9 @@ def parse_args():
     p.add_argument('--parity-dpi', type=int, default=150, help='Parity DPI (default 150)')
     p.add_argument('--no-parity', action='store_true', help='Skip the parity figure')
     p.add_argument('--no-surface', action='store_true', help='Skip the surface figures')
+    p.add_argument('--no-combined', action='store_true',
+                   help='Skip the combined figure that puts every condition in one '
+                        'image, one row per condition (columns CFD | model | error).')
     p.add_argument('--allow-partial-load', action='store_true',
                    help='Tolerate a checkpoint that does not fully match the model.')
     p.add_argument('--list-sims', action='store_true',
@@ -756,6 +830,44 @@ def main():
             fig = plot_surface_fields(xyz, fields, res['cond'], s,
                                       field_lims, err_lims, y_halfwidth)
             out = out_dir / f'v2_surface_fields_sim{s:03d}{tag}.png'
+            fig.savefig(out, dpi=args.dpi, bbox_inches='tight')
+            plt.close(fig)
+            written.append(out)
+            print(f'  saved {out.name}  ({out.stat().st_size / 1e6:.2f} MB, '
+                  f'{time.time() - t0:.0f}s)')
+
+    # ── figure 1b: every condition in one figure, one row each ───────────────
+    if not args.no_combined:
+        st  = max(1, args.stride)
+        xyz = tuple(c[::st] for c in coords)
+        # Solve the seam for THIS layout: the combined figure has a different
+        # row/column count, and the probe geometry has to match what is drawn.
+        y_hw_c, solved_c = _solve_y_halfwidth(
+            fig_size=(CELL_W * 3, CELL_H * len(sims)),
+            gs_kw=dict(GRID, top=0.945, bottom=0.085 if len(sims) > 3 else 0.145),
+            n_row=len(sims), n_col=3,
+            xlim=(float(xyz[0].min()), float(xyz[0].max())),
+            zlim=(float(xyz[2].min()), float(xyz[2].max())),
+            y_root=float(xyz[1].min()))
+        if not solved_c:
+            print('\n  WARNING: seam not solved for the combined layout; the two '
+                  'half-model views will not abut.')
+
+        strided = {'_coords': xyz}
+        for s in sims:
+            res = results[s]
+            strided[s] = dict(
+                cond=res['cond'], shock_true=res['shock_true'],
+                cp_true=res['Y_true'][::st, 0], cp_pred=res['Y_pred'][::st, 0],
+                cf_true=res['cf_true'][::st],   cf_pred=res['cf_pred'][::st],
+            )
+
+        print(f'\nRendering combined ({len(sims)} conditions in one figure)...')
+        for ci, coeff in enumerate(['Cp', 'Cf']):
+            t0  = time.time()
+            fig = plot_combined_conditions(
+                strided, sims, coeff, field_lims[ci], err_lims[ci], y_hw_c)
+            out = out_dir / f'v2_conditions_{coeff.lower()}{tag}.png'
             fig.savefig(out, dpi=args.dpi, bbox_inches='tight')
             plt.close(fig)
             written.append(out)
