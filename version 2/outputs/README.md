@@ -8,7 +8,7 @@ outputs/
 │   ├── surrogate_v2_best.pt                run 1 — MoE gate COLLAPSED
 │   ├── surrogate_v2_moefix.pt              run 2 — two-stage
 │   ├── surrogate_v2_full.pt                run 3 — from scratch, fixed loss
-│   └── surrogate_v2_moefix_long.pt         run 4 — two-stage, 200ep, DDP fixed ← best
+│   └── surrogate_v2_moefix_long.pt         run 4 — two-stage, 200 epochs   ← best
 ├── results/
 │   ├── v2_evaluation_collapsed_gate.txt    run 1
 │   ├── v2_evaluation_moefix.txt            run 2  (= surrogate_v2_moefix_evaluation.txt)
@@ -24,17 +24,19 @@ outputs/
 
 ## The four runs
 
-| | schedule | best epoch | stopped | converged? | DDP |
-|---|---|---|---|---|---|
-| `surrogate_v2_best.pt` | 200, from scratch | 157 | 174 | yes | unsynced |
-| `surrogate_v2_moefix.pt` | 50, head-only fine-tune | 45 | 50 = **cap** | **no** | unsynced |
-| `surrogate_v2_full.pt` | 200, from scratch | 175 | 192 | yes | unsynced |
-| `surrogate_v2_moefix_long.pt` | 200, head-only fine-tune | 118 | 134 | yes | **synced** |
+| | schedule | best epoch | stopped | converged? |
+|---|---|---|---|---|
+| `surrogate_v2_best.pt` | 200, from scratch | 157 | 174 | yes |
+| `surrogate_v2_moefix.pt` | 50, head-only fine-tune | 45 | 50 = **cap** | **no** |
+| `surrogate_v2_full.pt` | 200, from scratch | 175 | 192 | yes |
+| `surrogate_v2_moefix_long.pt` | 200, head-only fine-tune | 118 | 134 | yes |
 
-"unsynced" means the run predates commit `9fe5f2e`: DDP was constructed and then
-bypassed, so gradients were never all-reduced and each rank trained alone on
-1/world_size of the sims. Those three checkpoints are penalised by however many GPUs
-they used; treat their numbers as a floor.
+All four were run as a single process, not under `torchrun`. That matters because of the
+DDP defect fixed in commit `9fe5f2e` (the wrapper was built and then bypassed, so
+gradients were never all-reduced): with `world_size == 1` the wrapper is never
+constructed and the sampler is a plain `RandomSampler`, so the defect was latent and
+never affected these runs. Every one of them saw the full training set each epoch, and
+they are directly comparable to each other.
 
 **Run 1 — `surrogate_v2_best.pt`.** Trained *before* the load-balancing sign bug was
 found, so its MoE gate is collapsed onto a single expert. Keep it: it is the ablation
@@ -51,9 +53,9 @@ and the gate together from scratch came out worse than letting the backbone matu
 and specialising the head afterwards.
 
 **Run 4 — `surrogate_v2_moefix_long.pt`.** Same two-stage recipe as run 2 (resume from
-run 1, `--freeze-backbone`) but with a 200-epoch budget and with DDP gradient
-synchronisation fixed. Converged on patience at epoch 134, best at 118. **This is the
-model to report.**
+run 1, `--freeze-backbone`) with a 200-epoch budget instead of 50. Converged on patience
+at epoch 134, best at 118 — so unlike run 2 it had room to finish. **This is the model to
+report.**
 
 ## What the fix changed
 
@@ -107,13 +109,17 @@ everywhere, and unlike run 1 it beats v1 inside the shock region too. Second, an
 interesting, the two-stage schedule beats joint training from scratch by a wider margin
 than the sign fix itself bought (run 2 over run 3: Cp +0.0121 global, +0.0307 on shock).
 
-The plausible reading is a curriculum effect. In run 2 the backbone first matured against
-an effectively single-expert head, then the head specialised on frozen, settled features.
-In run 3 the backbone must co-adapt to a gate that is still reorganising, and the
-load-balancing pressure applies from epoch 0, competing with the accuracy objective while
-the representation is still forming. This is worth stating as a deliberate two-stage
-schedule rather than an accident — but it rests on one run per arm, so it is a hypothesis,
-not an established result. Repeated seeds would be needed to claim it.
+The plausible reading is a curriculum effect. In runs 2/4 the backbone first matured
+against an effectively single-expert head, then the head specialised on frozen, settled
+features. In run 3 the backbone must co-adapt to a gate that is still reorganising, and
+the load-balancing pressure applies from epoch 0, competing with the accuracy objective
+while the representation is still forming.
+
+The arms are cleanly matched — same data, same loss, same single-process setup, both
+converged on patience — so this is worth stating as a deliberate two-stage schedule
+rather than an accident. The gap widens with run 4, which is the two-stage arm given
+enough epochs to converge. What one run per arm cannot rule out is seed variance; see
+caveat 2.
 
 ## Run 4 — the numbers to report
 
@@ -164,8 +170,13 @@ points drawn from 140 sims, not the 4,068,074 from 156 that v1 reported. It is t
 better number, but it is no longer a like-for-like sample against v1 — say so, or quote
 the all-156 run for that one comparison.
 
-**2. Runs 1–3 trained without DDP gradient synchronisation** (see the table above). If
-they used more than one GPU their numbers are depressed, which also puts the run 2 vs
-run 3 curriculum comparison in question: both carried the same handicap, so the ordering
-probably survives, but the conclusion should be re-checked with synchronised runs before
-it is claimed in the paper.
+**2. The curriculum result rests on one run per arm.** Runs 2/4 (two-stage) and run 3
+(from scratch) are otherwise matched — same data, same loss, same single-process setup,
+both converged — so the comparison is sound as far as it goes. What it cannot rule out is
+seed variance: a single run per arm cannot separate a real effect from a lucky
+initialisation. Repeated seeds are what would turn this from a well-supported observation
+into a claim.
+
+**3. Run 4 is the two-stage arm to quote, not run 2.** Run 2 stopped at its epoch cap
+while still improving, so it understates the recipe. Any comparison against run 3 should
+use run 4.
