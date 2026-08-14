@@ -1,36 +1,42 @@
 Checkpoint: outputs/models/surrogate_v2_moefix_long.pt
-Model parameters: 4,603,918
+  sim 0  (1/8)
+  sim 22  (2/8)
+  sim 44  (3/8)
+  sim 66  (4/8)
+  sim 88  (5/8)
+  sim 110  (6/8)
+  sim 132  (7/8)
+  sim 155  (8/8)
 
-Excluding the 16 sims early stopping selected on: [12, 14, 30, 62, 63, 79, 93, 103, 109, 111, 112, 117, 122, 125, 146, 148]
-Evaluating on the remaining 140 sims × 260,774 nodes...
-  Evaluated 20/140 sims
-  Evaluated 40/140 sims
-  Evaluated 60/140 sims
-  Evaluated 80/140 sims
-  Evaluated 100/140 sims
-  Evaluated 120/140 sims
-  Evaluated 140/140 sims
+==============================================================================
+GATE / SHOCK-EXPERT DIAGNOSTIC — 2,086,192 nodes, 8 sims
+==============================================================================
+tau = 0.5884   |   true shock nodes: 438,984 (21.0%)
 
-────────────────────────────────────────────────────────────────────────────────────────────────────
-AeroSurrogate v2 — held-out test set (36,508,360 pts)
-────────────────────────────────────────────────────────────────────────────────────────────────────
-Subset               N pts     R²(Cp)    R²(Cfx)    R²(Cfy)    R²(Cfz)     MAE(Cp)    MAE(Cfx)    MAE(Cfy)    MAE(Cfz)
-----------------------------------------------------------------------------------------------------------------------
-global          36,508,360     0.9729     0.9172     0.9027     0.9209    0.027647    0.000226    0.000164    0.000148
-shock            6,830,670     0.9350     0.8923     0.8692     0.9076    0.040479    0.000399    0.000276    0.000249
-transonic       26,077,400     0.9842     0.9279     0.9167     0.9321    0.025027    0.000215    0.000157    0.000136
-subsonic        10,430,960     0.9471     0.9005     0.8839     0.9086    0.041453    0.000302    0.000235    0.000226
+[1] SHOCK INDICATOR  p_s
+  mean p_s | shock=1 : 0.9765
+  mean p_s | shock=0 : 0.0317
+  precision=0.8964  recall=0.9927  F1=0.9421
 
-Weighted R² (confidence_weight):  R²(Cp)=0.9768  R²(Cfx)=0.9218  R²(Cfy)=0.9097  R²(Cfz)=0.9243
+[2] GATE — mean weight per expert
+                      E0        E1        E2        E3
+  shock=1         0.4722    0.1794    0.0631    0.2853
+  shock=0         0.1451    0.2861    0.3144    0.2544
+  load balance   (entropy of mean gate) = 1.3827 / 1.3863   -> 99.7% of uniform
+  routing sharpness (mean per-node entropy) = 0.0800 / 1.3863   (near 0 = each node picks one expert)
+  experts with <1% mean usage: none
+  shock specialisation (total variation shock vs non-shock) = 0.3581   (0 = gate ignores shock, 1 = fully disjoint experts)
 
-Building v1-comparable sample (SEED=42, fraction=0.1)...
+[3] SHOCK RESIDUAL  p_s * shock_expert(h)   [Cp units]
+  mean |resid| | shock=1 : 0.133688
+  mean |resid| | shock=0 : 0.002353
+  ratio |resid| / |smooth| on shock nodes: 0.4338
 
-────────────────────────────────────────────────────────────────────────────────────────────────────
-AeroSurrogate v2 — v1-comparable sample (3,650,836 pts, SEED=42, frac=0.1)
-────────────────────────────────────────────────────────────────────────────────────────────────────
-Subset               N pts     R²(Cp)    R²(Cfx)    R²(Cfy)    R²(Cfz)     MAE(Cp)    MAE(Cfx)    MAE(Cfy)    MAE(Cfz)
-----------------------------------------------------------------------------------------------------------------------
-global           3,650,836     0.9736     0.9204     0.9041     0.9201    0.031375    0.000257    0.000191    0.000174
-shock              683,021     0.9340     0.8910     0.8671     0.9071    0.040780    0.000403    0.000280    0.000252
-transonic        2,608,846     0.9842     0.9299     0.9172     0.9318    0.027132    0.000236    0.000172    0.000150
-subsonic         1,041,990     0.9472     0.9009     0.8859     0.9074    0.042112    0.000308    0.000241    0.000233
+[4] Cp ERROR
+  MAE | shock=1 : 0.045799   bias=-0.001352
+  MAE | shock=0 : 0.033202   bias=+0.000767
+
+[5] ABLATION of the shock residual (shock nodes only)
+  MAE with residual    : 0.045799
+  MAE without residual : 0.137021
+  contribution         : +0.091222 (+66.58%)

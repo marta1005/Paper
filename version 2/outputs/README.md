@@ -133,8 +133,9 @@ These beat run 2 (0.9689 global / 0.9264 shock) *despite* being measured on the 
 unbiased subset — run 2's figures include the 16 sims its own early stopping selected on.
 The true gap is therefore wider than the difference in the numbers suggests.
 
-Gate at run 4: load balance 1.3777 / 1.3863 (99.4% of uniform), no dead experts, shock
-specialisation 0.2789, shock indicator F1 0.9564. Ablating the additive residual
+Gate at run 4, over 8 test sims (`gate_moefix_long.txt`, a larger sample than the 3-sim
+table above): load balance 1.3827 / 1.3863 — 99.7% of uniform, no dead experts, shock
+specialisation 0.3581, shock indicator F1 0.9564. Ablating the additive residual
 `p_s * shock_expert(h)` costs 78.6% of the Cp MAE on shock nodes — its largest
 contribution across all four runs.
 
