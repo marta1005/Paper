@@ -101,10 +101,15 @@ DEFAULT_CKPT = MODEL_DIR / 'surrogate_v2_moefix_long.pt'   # run 4, the reported
 # therefore different integers for the same physics — these are the v2 ones, and
 # _check_default_conditions() re-derives them at runtime so a change to
 # dataset.csv cannot silently repoint a figure at the wrong flow.
-DEFAULT_SIMS = [0, 112, 69, 78, 86, 147]
+# Sim 112 (M=0.70, AoA=-10.0, Pi=4) is one of the 16 simulations early stopping
+# selected the checkpoint on, so a figure of it shows the model on data it was
+# tuned against. Replaced by 113, the nearest condition of the same family that
+# is genuinely held out — and which additionally carries confidence weight 1.0
+# rather than 112's 0.5.
+DEFAULT_SIMS = [0, 113, 69, 78, 86, 147]
 DEFAULT_CONDITIONS = [           # (Mach, AoA_deg, Pi*1e-5) each default sim must match
     (0.30,  -6.0, 1.0),          # subsonic, negative incidence
-    (0.70, -10.0, 4.0),          # high-subsonic, strong negative incidence
+    (0.70,  -7.5, 4.0),          # high-subsonic, strong negative incidence
     (0.80,   0.0, 2.0),          # transonic cruise
     (0.84,   5.0, 2.0),          # transonic, moderate incidence
     (0.86,   0.0, 2.0),          # high-transonic
