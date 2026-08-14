@@ -15,6 +15,8 @@ outputs/
 │   ├── surrogate_v2_moefix_evaluation.txt  run 2, re-run under the derived name
 │   ├── surrogate_v2_full_evaluation.txt    run 3
 │   ├── surrogate_v2_moefix_long_evaluation.txt  run 4, held-out 140 sims
+│   ├── collapsed_heldout.txt               run 1, held-out 140 sims
+│   ├── full_heldout.txt                    run 3, held-out 140 sims
 │   └── gate_moefix_long.txt                diagnose_gate.py on run 4
 └── plots/
     ├── gate_diagnostic_moefix.png          diagnose_gate.py on run 2
@@ -121,23 +123,36 @@ rather than an accident. The gap widens with run 4, which is the two-stage arm g
 enough epochs to converge. What one run per arm cannot rule out is seed variance; see
 caveat 2.
 
-## Run 4 — the numbers to report
+## The table to report — held-out test set
 
-Held-out test set: the 140 sims that never touched model selection
-(`--exclude-val-sims`), 36,508,360 points.
+All three converged runs over the same 140 sims that never touched model selection
+(`--exclude-val-sims`), 36,508,360 points, identical subset masks. **This is the
+comparison for the paper**; everything above it is measured on all 156 and is
+optimistic by the amount early stopping fitted to its 16 selection sims.
 
-| Subset | R²(Cp) | R²(Cfx) | R²(Cfy) | R²(Cfz) | MAE(Cp) |
-|---|---|---|---|---|---|
-| global | **0.9729** | 0.9172 | 0.9027 | 0.9209 | 0.027647 |
-| shock | **0.9350** | 0.8923 | 0.8692 | 0.9076 | 0.040479 |
-| transonic | 0.9842 | 0.9279 | 0.9167 | 0.9321 | 0.025027 |
-| subsonic | 0.9471 | 0.9005 | 0.8839 | 0.9086 | 0.041453 |
+| Subset | Coef | run 1 collapsed | run 3 from scratch | run 4 two-stage |
+|---|---|---|---|---|
+| global | Cp | 0.9549 | 0.9580 | **0.9729** |
+| | Cfx | 0.8665 | 0.8775 | **0.9172** |
+| | Cfy | 0.8443 | 0.8509 | **0.9027** |
+| | Cfz | 0.8796 | 0.8806 | **0.9209** |
+| shock | Cp | 0.8814 | 0.8956 | **0.9350** |
+| | Cfx | 0.8231 | 0.8445 | **0.8923** |
+| | Cfy | 0.7867 | 0.8063 | **0.8692** |
+| | Cfz | 0.8592 | 0.8677 | **0.9076** |
+| transonic | Cp | 0.9669 | 0.9698 | **0.9842** |
+| subsonic | Cp | 0.9259 | 0.9303 | **0.9471** |
 
-Weighted R² (confidence_weight): Cp 0.9768, Cfx 0.9218, Cfy 0.9097, Cfz 0.9243.
+Run 4 weighted R² (confidence_weight): Cp 0.9768, Cfx 0.9218, Cfy 0.9097, Cfz 0.9243.
 
-These beat run 2 (0.9689 global / 0.9264 shock) *despite* being measured on the harder,
-unbiased subset — run 2's figures include the 16 sims its own early stopping selected on.
-The true gap is therefore wider than the difference in the numbers suggests.
+The two effects separate cleanly on this table, and they are not the same size. Fixing
+the load-balancing sign, holding the schedule fixed (run 1 → run 3), buys +0.0031 on
+global Cp and +0.0142 on shock. Adding the two-stage schedule on top (run 3 → run 4)
+buys a further +0.0149 and +0.0394. **The curriculum is worth about 2.8× the sign fix
+inside the shock region** — the place the architecture exists to serve.
+
+Note also that run 1, with its gate collapsed, sits at 0.8814 on shock Cp — still below
+v1's 0.8827. The mixture only pays for itself once the gate is actually balanced.
 
 Gate at run 4, over 8 test sims (`gate_moefix_long.txt`, a larger sample than the 3-sim
 table above): load balance 1.3827 / 1.3863 — 99.7% of uniform, no dead experts, shock
@@ -151,24 +166,17 @@ per-epoch for the first time now that `L_lb` is logged.
 
 ## Two caveats for the paper
 
-**1. The comparison table is not measured on one common set.** Runs 1–3 were evaluated
-over all 156 test sims; run 4 over the held-out 140. Because the 16 excluded sims are the
-ones early stopping fit to, the all-156 figures flatter runs 1–3 and the held-out figures
-are stricter on run 4 — so run 4's lead is real and understated, but the rows are not
-strictly comparable. Before the table goes in the paper, re-run runs 1–3 with
-`--exclude-val-sims` so every row is measured over the same 140 sims:
+**1. The v1 baseline is not on the held-out set.** v1's published figures (global R²(Cp)
+0.9506, shock 0.8827) come from its own protocol: a 10% sample of all 156 test sims,
+4,068,074 points. The held-out table above uses 140 sims. Putting v1 on the same footing
+would mean re-evaluating the v1 checkpoint, and v1's own validation split was different,
+so "exclude these 16" is not even the right exclusion for it.
 
-```bash
-python evaluate_v2.py --ckpt outputs/models/surrogate_v2_full.pt --exclude-val-sims \
-       --out outputs/results/full_heldout.txt
-python evaluate_v2.py --ckpt outputs/models/surrogate_v2_best.pt --exclude-val-sims \
-       --out outputs/results/collapsed_heldout.txt
-```
-
-Note also that under `--exclude-val-sims` the "v1-comparable sample" row is 3,650,836
-points drawn from 140 sims, not the 4,068,074 from 156 that v1 reported. It is the
-better number, but it is no longer a like-for-like sample against v1 — say so, or quote
-the all-156 run for that one comparison.
+This does not threaten the conclusion. Run 4 is measured on the *stricter* set — it
+excludes the sims its own early stopping fitted to, which v1's numbers do not — and still
+leads by +0.022 on global Cp and +0.052 on shock. A margin that size does not turn on a
+140-vs-156 population difference. State the protocol difference and the direction of the
+bias, and the comparison holds.
 
 **2. The curriculum result rests on one run per arm.** Runs 2/4 (two-stage) and run 3
 (from scratch) are otherwise matched — same data, same loss, same single-process setup,
