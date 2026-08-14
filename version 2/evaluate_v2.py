@@ -20,13 +20,19 @@ from pathlib import Path
 
 
 class _Tee:
-    """Duplicates writes to stdout and a log file simultaneously."""
+    """Duplicates writes to stdout and a log file simultaneously.
+
+    Flushes on every write: the report is smaller than the default buffer, so
+    without this a run killed part-way leaves a 0-byte file instead of the
+    partial results it had already produced.
+    """
     def __init__(self, *streams):
         self.streams = streams
 
     def write(self, data):
         for s in self.streams:
             s.write(data)
+            s.flush()
 
     def flush(self):
         for s in self.streams:

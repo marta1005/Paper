@@ -13,6 +13,7 @@ Usage:
 """
 import argparse
 import csv
+import math
 import re
 import sys
 from pathlib import Path
@@ -94,15 +95,21 @@ def plot(rows, out_png, stop_epoch=None, title=None):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
 
-    ep = [r['epoch'] for r in rows]
-    fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(7.2, 6.6), dpi=200, sharex=True,
-        gridspec_kw={'height_ratios': [1, 1.15], 'hspace': 0.12})
+    has_lb = any('L_lb' in r for r in rows)
+    n_rows = 3 if has_lb else 2
+    heights = [1, 0.5, 1.15] if has_lb else [1, 1.15]
+    fig, axes = plt.subplots(
+        n_rows, 1, figsize=(7.2, 8.0 if has_lb else 6.6), dpi=200, sharex=True,
+        gridspec_kw={'height_ratios': heights, 'hspace': 0.12})
+    ax1, ax2 = (axes[0], axes[-1])
+    ax_lb    = axes[1] if has_lb else None
     fig.patch.set_facecolor(SURFACE)
 
     # ── Panel A: training losses. Separate panel rather than a second y-axis:
     # losses and R² have unrelated scales and must never share an axis.
-    loss_keys = [k for k in ('loss', 'L_cp', 'L_fric', 'L_lb')
+    # L_lb is excluded — it is an entropy that the loss *maximises*, so showing
+    # it rising in a panel labelled "training loss" reads as a diverging run.
+    loss_keys = [k for k in ('loss', 'L_cp', 'L_fric')
                  if any(k in r for r in rows)]
     for i, k in enumerate(loss_keys):
         xs = [r['epoch'] for r in rows if k in r]
@@ -115,6 +122,24 @@ def plot(rows, out_png, stop_epoch=None, title=None):
     ax1.legend(frameon=False, fontsize=8, labelcolor=INK_MUTED, ncol=len(loss_keys))
     if title:
         ax1.set_title(title, color=INK, fontsize=11, loc='left', pad=10)
+
+    # ── Panel LB: MoE gate load balance. L_lb is the entropy of the mean gate;
+    # log(num_experts) means every expert carries an equal share, 0 means the
+    # gate has collapsed onto one. Shown against that ceiling so the reader can
+    # see how far from balanced the mixture actually is.
+    if ax_lb is not None:
+        xs = [r['epoch'] for r in rows if 'L_lb' in r]
+        ys = [r['L_lb'] for r in rows if 'L_lb' in r]
+        n_exp = 4
+        hmax  = math.log(n_exp)
+        ax_lb.axhline(hmax, color=INK_MUTED, linewidth=1, linestyle='--', alpha=0.7)
+        ax_lb.annotate(f'log({n_exp}) = {hmax:.3f}, all experts equal',
+                       xy=(xs[0], hmax), xytext=(2, -11),
+                       textcoords='offset points', fontsize=7.5, color=INK_MUTED)
+        ax_lb.plot(xs, ys, color=SERIES[3], linewidth=2)
+        ax_lb.set_ylim(0, hmax * 1.18)
+        _style(ax_lb)
+        ax_lb.set_ylabel('gate load\nbalance', color=INK_MUTED, fontsize=9)
 
     # ── Panel B: validation R², the early-stopping criterion.
     coefs = ['Cp', 'Cfx', 'Cfy', 'Cfz']
