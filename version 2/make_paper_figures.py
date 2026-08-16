@@ -116,6 +116,10 @@ DEFAULT_CONDITIONS = [           # (Mach, AoA_deg, Pi*1e-5) each default sim mus
     (0.90,   6.0, 4.0),          # high Mach, high incidence
 ]
 
+# The paper calls the model simply "AeroSurrogate" — the v1/v2 distinction is
+# internal to this repo and does not appear in the published figures.
+DEFAULT_MODEL_TAG = 'AeroSurrogate'
+
 COEFF_NAMES  = ['Cp', 'Cfx', 'Cfy', 'Cfz']
 COEFF_LABELS = [r'$C_p$', r'$C_{fx}$', r'$C_{fy}$', r'$C_{fz}$']
 
@@ -395,7 +399,7 @@ def _draw_pair(fig, subspec, X, Y, Z, values, cmap, vmin, vmax, lims, annotate):
 
 
 def plot_surface_fields(coords, fields, cond, sim, field_lims, err_lims,
-                        y_halfwidth, model_tag='AeroSurrogate v2'):
+                        y_halfwidth, model_tag=DEFAULT_MODEL_TAG):
     """3 rows (CFD | model | error) x 2 columns (Cp, |Cf|)."""
     X, Y, Z = coords
     col_labels = [r'$C_p$', r'$|C_f|$']
@@ -465,7 +469,7 @@ def plot_surface_fields(coords, fields, cond, sim, field_lims, err_lims,
 # ──────────────────────────────────────────────────────────────────────────────
 
 def plot_combined_conditions(results, sims, coeff, field_lim, err_lim,
-                             y_halfwidth, model_tag='AeroSurrogate v2'):
+                             y_halfwidth, model_tag=DEFAULT_MODEL_TAG):
     """One figure, one row per flight condition, columns CFD | model | error.
 
     This is the v1 ``cp_comparison_conditions`` layout, with one change: v1 gave
@@ -535,7 +539,7 @@ def plot_combined_conditions(results, sims, coeff, field_lim, err_lim,
     return fig
 
 
-def plot_parity(Y_true, Y_pred, sims, model_tag='AeroSurrogate v2',
+def plot_parity(Y_true, Y_pred, sims, model_tag=DEFAULT_MODEL_TAG,
                 max_points=200_000, clip_pct=99.9, seed=SEED):
     """2x2 parity, one panel per coefficient, in PHYSICAL units.
 

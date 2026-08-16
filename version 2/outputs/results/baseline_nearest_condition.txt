@@ -1,0 +1,23 @@
+Test simulations scored: 140 (excluding the 16 validation sims)
+Normalised distance to the nearest training condition: median 0.0333, max 0.1000
+  20/140 sims
+  40/140 sims
+  60/140 sims
+  80/140 sims
+  100/140 sims
+  120/140 sims
+  140/140 sims
+
+==============================================================================
+NEAREST-TRAINING-CONDITION BASELINE — no learning, copies the neighbour
+==============================================================================
+Subset              N pts     R²(Cp)    R²(Cfx)    R²(Cfy)    R²(Cfz)
+---------------------------------------------------------------------
+global         36,508,360     0.9159     0.8729     0.8823     0.8629
+shock           6,830,673     0.7779     0.8524     0.8843     0.9047
+transonic      26,077,400     0.9600     0.9146     0.9333     0.9429
+subsonic       10,430,960     0.8078     0.7899     0.8098     0.7727
+
+Compare against AeroSurrogate on the same held-out sims:
+  global    0.9729   0.9172   0.9027   0.9209
+  shock     0.9350   0.8923   0.8692   0.9076
