@@ -183,16 +183,23 @@ def stage_fit(args):
 
     cache = ROOT / 'outputs' / 'symbolic_targets.npz'
     print(f'Checkpoint: {args.ckpt}')
+    n_sims_used = args.sims
     if args.reuse_cache and cache.exists():
         d = np.load(cache)
         X, p, shock = d['X'], d['p'], d['shock']
-        print(f'Reusing the cached sample from {cache.name}: {len(p):,} nodes')
+        # The cache may hold a different number of simulations than --sims asks
+        # for; reporting the CLI value would put a wrong number in the paper.
+        n_sims_used = int(d['n_sims']) if 'n_sims' in d else -1
+        print(f'Reusing the cached sample from {cache.name}: {len(p):,} nodes'
+              f' from {n_sims_used if n_sims_used > 0 else "an unrecorded number of"}'
+              f' simulations')
     else:
         print(f'Extracting soft p_s over {args.sims} training simulations '
               f'({args.per_sim:,} nodes each)...')
         X, p, shock = extract(model, scaler, pre, args.sims, args.per_sim, rng, device)
         cache.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(cache, X=X, p=p, shock=shock)
+        np.savez_compressed(cache, X=X, p=p, shock=shock,
+                            n_sims=np.array(args.sims))
     print(f'\nCollected {len(p):,} nodes.  p_s mean {p.mean():.4f}  '
           f'true shock {100 * shock.mean():.1f}%')
 
@@ -258,7 +265,7 @@ def stage_fit(args):
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
     with open(OUT_TXT, 'w') as fh:
         fh.write(f'Checkpoint: {args.ckpt}\n')
-        fh.write(f'Training sims sampled: {args.sims}, nodes: {len(p):,}\n')
+        fh.write(f'Training sims sampled: {n_sims_used}, nodes: {len(p):,}\n')
         fh.write(f'Features: {SR_FEATURES}\n\n')
         fh.write(f'HIGHEST-FIDELITY EXPRESSION (complexity '
                  f'{pick["complexity"] if pick else "?"}):\n{expr}\n\n')

@@ -1,5 +1,5 @@
 Checkpoint: /Users/martaarnabatmartin/Desktop/Paper/version 2/outputs/models/surrogate_v2_moefix_long.pt
-Training sims sampled: 40, nodes: 300,000
+Training sims sampled: 15, nodes: 300,000
 Features: ['Mach', 'AoA', 'x_norm', 'span_norm', 'nz', 'Cp_crit', 'q_dyn', 'AoA_sin', 'L_factor']
 
 HIGHEST-FIDELITY EXPRESSION (complexity 29):

@@ -67,7 +67,15 @@ criterion recovered by symbolic regression from the same physics
 labels is reported separately, as a
 result about the point-wise predecessor of this model: substituting it
 there for the neural gate costs $0.0085$ in $R^{2}(C_p)$ and $0.1005$ in
-$R^{2}(C_{fy})$.}
+$R^{2}(C_{fy})$.  The same distillation applied to the spatial
+indicator independently recovers that expression's core---the
+critical pressure coefficient inside an exponential over span-wise
+station---but attains only $R^{2}=0.4095$ against the indicator's
+output where an unconstrained model on the same nine features reaches
+$0.8850$, and substituting it costs $0.1096$ of shock-subset
+$R^{2}(C_p)$ against $0.0168$ for the corresponding substitution in
+the point-wise model: interpretability grows more expensive as the
+indicator grows richer.}
 
 \begin{document}
 \maketitle
@@ -190,7 +198,9 @@ transport configuration from surface geometry and flight condition
 alone.  The model reported here is AeroSurrogate, a
 $4.6\times 10^{6}$-parameter spatial network; the symbolic shock
 criterion of Section~\ref{sec:sr} is a result about its point-wise
-predecessor, and is labelled as such throughout.  The four main contributions
+predecessor, and is labelled as such throughout, while
+Section~\ref{sec:srspatial} reports what the same distillation yields
+when it is turned on the spatial indicator.  The four main contributions
 are:
 \begin{enumerate}
   \item A \emph{spatial backbone}: an eight-layer message-passing graph
@@ -229,7 +239,9 @@ Section~\ref{sec:dataset} describes the simulation database, the
 Section~\ref{sec:method} presents the AeroSurrogate architecture, the
 routing mechanism, and the training procedure.
 Section~\ref{sec:sr} details the symbolic regression stage and the
-symbolic-gate retraining, both carried out for the point-wise model.
+symbolic-gate retraining carried out for the point-wise model, and
+the distillation of the spatial indicator into the same feature
+space.
 Section~\ref{sec:results} reports results on the held-out test set, and
 Section~\ref{sec:conclusions} draws conclusions.
 
@@ -1125,18 +1137,24 @@ an entire surface rather than a batch of independent points, so the
 two are not directly comparable.
 
 % ================================================================
-\section{A SYMBOLIC SHOCK CRITERION IN THE POINT-WISE FEATURE SPACE}
+\section{SYMBOLIC SHOCK CRITERIA: THE POINT-WISE MODEL AND THE
+  SPATIAL INDICATOR}
 \label{sec:sr}
 % ================================================================
 
-This section reports a result about the \emph{point-wise
-predecessor} of the model described above---the point-wise baseline quoted in
-Table~\ref{tab:results}---and is labelled as such throughout.  That
-model admits a closed-form shock criterion because its shock
-indicator reads a vector of nine named physical variables; the
-spatial indicator of the present model reads the latent produced by
-the message-passing backbone, so nothing in this section is a
-statement about it.
+This section reports two symbolic results and keeps them apart
+throughout.  The first concerns the \emph{point-wise predecessor} of
+the model described above---the point-wise baseline quoted in
+Table~\ref{tab:results}---which admits a closed-form shock criterion
+because its shock indicator reads a vector of sixteen named physical
+variables, nine of which are offered to the search
+(Sections~\ref{sec:srresults} and~\ref{sec:symgate}).  The
+second turns the same machinery on the spatial indicator of the
+present model, which reads the latent produced by the message-passing
+backbone.  There the nine variables are no longer the indicator's own
+inputs but a candidate basis in which to approximate its output, and
+Section~\ref{sec:srspatial} measures how far that approximation gets
+and what substituting it costs.
 
 Performed with PySR~\cite{Cranmer2020}, the search serves two
 purposes: (i)~\emph{interpretability}---a human-readable equation for
@@ -1160,10 +1178,12 @@ physically meaningful features:
 Raw geometric coordinates $(x,y,z)$ and the normal components
 $(n_x,n_y)$ are excluded to bias the search toward conditions based
 on flow physics and aerodynamically meaningful coordinates rather
-than absolute surface location.  PySR performs a multi-objective
-evolutionary search (200 iterations, 50\,000 training samples) over
+than absolute surface location, and the two total-pressure features
+$\Pi$ and $\Pi_{\mathrm{norm}}$ are withheld as well.  PySR performs a
+multi-objective evolutionary search (200 iterations, 20 populations of
+50 expressions, maximum complexity 20, 50\,000 training samples) over
 expression trees built from the operator set
-$\{+,\,-,\,\times,\,\div,\,\exp,\,\tanh\}$, minimising the MSE
+$\{+,\,-,\,\times,\,\div,\,\exp,\,\log,\,|\cdot|,\,\tanh\}$, minimising the MSE
 penalised by expression complexity (node count), and returns a Pareto
 front of candidate expressions.  A RandomForest classifier is trained
 in parallel on the same features to provide a model-agnostic feature
@@ -1367,9 +1387,164 @@ gates is claimed.  Second, the result belongs to the point-wise
 feature space.  The spatial indicator consumes the message-passing
 latent, which the nine named variables of Eq.~(\ref{eq:srfeatures})
 do not span, so this expression cannot be a distillation of it, and
-no algebraic gate is used anywhere in the reported model.
-Re-deriving an interpretable sensor directly from the learned spatial
-latent is left as future work.
+no algebraic gate is used anywhere in the reported model.  Whether an
+expression over those same nine variables can instead be fitted to
+the spatial indicator's own output is the question of
+Section~\ref{sec:srspatial}.
+
+\subsection{Distilling the spatial indicator into the same feature
+  space}
+\label{sec:srspatial}
+
+The point-wise expression was fitted to the physics label.  The
+spatial indicator cannot be treated that way, because what the
+reported model routes on is the indicator's own soft output $p_s$ and
+not the label; the object to be distilled is therefore $p_s$ itself.
+It was evaluated with the reported checkpoint over $15$ training
+simulations spanning the flight envelope, $300\,000$ nodes in all, of
+which $200\,000$ were given to the search and $100\,000$ held back for
+scoring.  The candidate
+basis is the same nine variables of Eq.~(\ref{eq:srfeatures}), each
+read at the node being predicted, so that any expression found is
+strictly local---a deliberate choice, since it is exactly the
+locality that the message-passing indicator does not obey.  The
+budget is far larger than the point-wise one: $40$ populations of
+$100$ expressions over $500$ iterations, a maximum complexity of
+$30$, a different operator set,
+$\{+,\,-,\,\times,\,\div,\,\exp,\,\tanh,\,\sqrt{\cdot},\,(\cdot)^{2}\}$,
+and $196$ minutes of search.  Fitting the indicator's output rather
+than the label also removes the calibration step of
+Eq.~(\ref{eq:srcalibrated}): the expression already predicts a
+probability, and its mean over the held-out simulations, $0.2107$,
+matches the neural mean of $0.2069$, so it is used clipped to
+$[0,1]$ and otherwise unaltered.
+
+The search independently recovers the core of the point-wise
+criterion, and this is worth stating plainly.  Every entry on the
+Pareto front from complexity $6$ upward combines an exponential of
+$C_{p}^{\mathrm{crit}}$ with the span coordinate $\eta$, which sits
+inside that exponential in all but three of them; from
+complexity $14$ to the top of the front at $29$---sixteen
+entries---the factor $\exp(C_{p}^{\mathrm{crit}}/\sqrt{\eta})$ is
+present in every one of them, literally in ten, as a factor of a
+single exponential in an eleventh, and in the remaining five with
+$\tanh\sqrt{\eta}$, a scaling constant, or $\eta$ perturbed by a
+chord-wise term in place of $\sqrt{\eta}$.  That is
+Eq.~(\ref{eq:srdiscovered}) up to the outer squashing and the
+exponent on $\eta$, reached against a different target (a network's
+soft output rather than the RANS label), for a different model
+(spatial rather than point-wise), with a different operator set and a
+much larger budget.  The coupling of proximity to the sonic condition
+with span-wise station is therefore not an artefact of how the first
+search was configured.  What the larger budget adds to that core are
+$\mathrm{AoA}_{\sin}$, $n_{z}$ and $x_{\mathrm{norm}}$ terms; the
+highest-fidelity expression, at complexity $29$, is
+\begin{equation}
+  \tilde{p}_{s}^{\mathrm{SR}} = M\,e^{C_{p}^{\mathrm{crit}}}
+  \left[
+    \exp\!\left(\frac{C_{p}^{\mathrm{crit}}}{\sqrt{\eta}}\right)
+    + \mathrm{AoA}_{\sin}\!\left(
+        n_{z} + \left|\mathrm{AoA}_{\sin} + n_{z}\right|
+        - \exp\tanh\!\left(\frac{\mathrm{AoA}_{\sin}}
+                                {0.4628 - x_{\mathrm{norm}}}\right)
+      \right)
+  \right]^{2}
+  \label{eq:srspatial}
+\end{equation}
+where the tilde distinguishes it from the point-wise gate of
+Eq.~(\ref{eq:srcalibrated}) and the absolute value is the search's
+own $\sqrt{(\cdot)^{2}}$.  Legibility has clearly been spent: the
+chord-wise coordinate absent from the point-wise criterion enters
+here, but through a term whose reading is no longer immediate.
+
+The fidelity is nonetheless low.  Eq.~(\ref{eq:srspatial}) reaches
+$R^{2} = 0.4095$ against $p_s$ on the $100\,000$ held-out nodes, and
+$0.3984$ was already available at complexity $21$, so the last third
+of the front buys almost nothing; against the hard label of
+Eq.~(\ref{eq:labels}) the same expression scores precision $0.7082$
+and recall $0.4510$.  A bare fidelity figure invites the objection
+that the search was misconfigured, so it is reported here against a
+ceiling.  Two deliberately over-powered models were fitted to the
+same targets, over the same nine features and the same
+$300\,000$-node sample split $225\,000/75\,000$: gradient boosting
+with $400$ trees reaches $R^{2} = 0.8717$ ($F_1 = 0.907$ against the
+hard label) and a $256$--$128$--$64$ MLP reaches $R^{2} = 0.8850$
+($F_1 = 0.894$).  The information the spatial indicator carries is
+thus very largely present in the nine local variables---an
+unconstrained function of them recovers $0.8850$ of its
+variance---while a $29$-node expression over the identical inputs
+recovers $0.4095$, a shortfall of $0.4755$ to the ceiling.  It is the
+closed form, not the locality of the features, that cannot hold the
+signal.  Budget does not explain the gap either: an earlier, much
+shorter search over the same targets stopped at $R^{2} = 0.3671$, and
+the long search improves on it by $0.042$ while the ceiling stays
+where it is.
+
+What a reader needs from a distillation is not its fidelity but what
+substituting it costs, and Table~\ref{tab:symspatial} reports that on
+the held-out partition of Table~\ref{tab:results}: $140$ simulations,
+$36\,508\,360$ points, with Eq.~(\ref{eq:srspatial}) driving both
+places $p_s$ enters the pressure path---the gate input and the
+scaling of the additive shock residual.  Globally the substitution
+costs $0.0116$ of $R^{2}(C_p)$.  On shock nodes it costs $0.1096$,
+and the mean absolute error there nearly doubles, from $0.0405$ to
+$0.0795$.  The friction columns of the table are a control rather
+than an omission: the friction head never reads $p_s$, so its three
+scores are unchanged to four decimals under the substitution, which
+is what establishes that the pressure deltas are attributable to the
+routing signal and to nothing else that moved.  At $0.8253$ on shock
+$C_p$ the algebraic gate falls below the collapsed-gate run of
+Table~\ref{tab:results} ($0.8814$) and below the point-wise
+predecessor on its own sample ($0.8827$): the substitution discards
+the whole of the shock-region gain the spatial architecture was built
+to obtain.
+
+\begin{table}[ht]
+\centering
+\caption{Downstream cost of replacing the spatial ShockIndicator with
+  the distilled expression of Eq.~(\ref{eq:srspatial}), on the
+  held-out partition of Table~\ref{tab:results} (140 simulations,
+  36\,508\,360 points).  The symbolic value drives both places $p_s$
+  enters the pressure path: the gate input and the scaling of the
+  additive shock residual.  The friction columns are a control, not
+  an omission---the friction head never reads $p_s$, and its scores
+  are accordingly identical under the two gates to four decimals.}
+\label{tab:symspatial}
+\begin{tabular}{lrcccccc}
+\toprule
+ & & \multicolumn{3}{c}{$R^{2}(C_p)$}
+   & \multicolumn{3}{c}{$R^{2}$ friction, either gate} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+\textbf{Subset} & \textbf{Points} & neural & symbolic & $\Delta$
+  & $C_{fx}$ & $C_{fy}$ & $C_{fz}$ \\
+\midrule
+global    & 36\,508\,360 & 0.9729 & 0.9613 & $-0.0116$
+  & 0.9172 & 0.9027 & 0.9209 \\
+shock     &  6\,830\,670 & 0.9350 & 0.8253 & $\mathbf{-0.1096}$
+  & 0.8923 & 0.8692 & 0.9076 \\
+transonic & 26\,077\,400 & 0.9842 & 0.9696 & $-0.0146$
+  & 0.9279 & 0.9167 & 0.9321 \\
+subsonic  & 10\,430\,960 & 0.9471 & 0.9438 & $-0.0033$
+  & 0.9005 & 0.8839 & 0.9086 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Set against the point-wise result of Section~\ref{sec:symgate}, this
+is the finding of the section.  There, replacing the neural gate with
+a closed form cost $0.0168$ of shock-subset $R^{2}(C_p)$
+($0.8827 \to 0.8659$); here the same substitution costs $0.1096$
+($0.9350 \to 0.8253$), $6.5\times$ as much, although the expression
+is six times the size of the point-wise one and was found with a much
+larger budget.  Interpretability of the gate grows more expensive as
+the indicator grows richer: a shock probability assembled from a
+neighbourhood is not, in any form that stays legible, a function of
+the node's own named variables, and the ceiling locates the
+obstruction in the algebraic hypothesis class rather than in the
+features.  The reported model accordingly uses the neural indicator
+throughout, and the closed-form criteria of this section are offered
+as an analysis of what the gate has learned, not as a component of
+it.
 
 % ================================================================
 \section{RESULTS AND DISCUSSION}
@@ -1417,7 +1592,7 @@ local surface orientation and cross-flow direction, so its
 distribution is centred near zero over large portions of the airframe
 and the $R^{2}$ statistic becomes intrinsically more demanding.
 Consistently with that reading, $C_{fy}$ is the weakest of the three
-friction components in both versions, while $C_{fz}$---despite being a
+friction components in both models, while $C_{fz}$---despite being a
 sign-changing projection as well---is marginally the strongest.
 Finally, the RANS friction fields are
 themselves the least reliable solver output at the extreme
@@ -1744,7 +1919,7 @@ obtained over a wide multi-regime envelope (Mach 0.30--0.96, angle of
 attack from $-15^{\circ}$ to $+12.5^{\circ}$ on the held-out
 partition) by a single model, without per-condition retraining or
 condition-specific calibration---and it is obtained \emph{spatially}.
-Replacing the point-wise input vector of the previous version with an
+Replacing the point-wise input vector of the predecessor with an
 eight-layer message-passing backbone over the surface graph, at the
 cost of growing the model from $3\times 10^{5}$ to 4\,603\,918
 parameters, is what produces the gain: $R^{2}(C_p)$ rises from
@@ -1788,7 +1963,7 @@ evaluated on 36\,508\,360 held-out RANS surface points of the ONERA
 CRM WBPN configuration.  Because the sixteen simulations on which
 early stopping selects the checkpoint are themselves drawn from the
 test partition, every score quoted here is measured on the remaining
-140 simulations, which took no part in model selection.  Five
+140 simulations, which took no part in model selection.  Six
 conclusions are drawn:
 
 \begin{itemize}
@@ -1843,9 +2018,26 @@ conclusions are drawn:
         ($C_{fz}$), against $0.9506$, $0.8512$, $0.8463$ and $0.8555$
         for the neural gate on the same sample---interpretability
         bought at a real, and for $C_{fy}$ substantial, cost in
-        accuracy.  The result belongs to that feature space and does
-        not carry over to the spatial indicator, which reads a
-        learned latent rather than named physical variables.
+        accuracy.  The expression belongs to that feature space; what
+        the same distillation yields against the spatial indicator is
+        a separate measurement, and the next conclusion reports it.
+  \item Distilling the spatial indicator into those same nine local
+        variables corroborates the point-wise criterion and, at the
+        same time, prices interpretability far higher.  The search
+        independently rediscovers the core of
+        Eq.~(\ref{eq:srdiscovered})---$C_p^{\mathrm{crit}}$ inside an
+        exponential over span-wise station, here as
+        $\exp(C_p^{\mathrm{crit}}/\sqrt{\eta})$---but reaches only $R^{2}=0.4095$
+        against the indicator's output where gradient boosting and a
+        small MLP on the identical features reach $0.8717$ and
+        $0.8850$: the information is local, and it is the closed form
+        that cannot carry it.  Substituting the expression for the
+        neural indicator costs $0.1096$ of shock-subset $R^{2}(C_p)$
+        ($0.9350 \to 0.8253$, Table~\ref{tab:symspatial}) against
+        $0.0168$ for the same substitution in the point-wise
+        model---$6.5\times$ as much---while the friction scores,
+        which do not read $p_s$, are unchanged and serve as the
+        control.  No algebraic gate is used in the reported model.
 \end{itemize}
 
 Future work will extend the framework to multiple geometries to test
@@ -1859,10 +2051,14 @@ spatial formulation raises the cost of doing so: a perturbed geometry
 is evaluated as a whole surface with a rebuilt neighbour graph rather
 than point by point, so graph construction must either be folded into
 the optimisation loop or held fixed under sufficiently small
-deformations.  Re-deriving an interpretable, closed-form shock sensor
-directly from the learned spatial latent, so that the
-interpretability of the point-wise formulation is recovered without
-its accuracy penalty, remains open.
+deformations.  An interpretable sensor for the spatial indicator also
+remains open, but Section~\ref{sec:srspatial} narrows what would
+count as progress towards one: since an unconstrained model over the
+nine local variables recovers most of the indicator's output while a
+closed form over the same variables does not, the obstruction lies in
+the algebraic hypothesis class and not in the locality of the
+features, and a larger symbolic search over that feature set is not
+the route.
 
 
 % ================================================================

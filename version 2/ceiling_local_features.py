@@ -93,7 +93,8 @@ def main():
         print(f'Extracting p_s over {args.sims} training simulations...')
         X, p, shock = extract(args.sims, args.per_sim)
         CACHE_NPZ.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(CACHE_NPZ, X=X, p=p, shock=shock)
+        np.savez_compressed(CACHE_NPZ, X=X, p=p, shock=shock,
+                            n_sims=np.array(args.sims))
         print(f'Cached to {CACHE_NPZ}')
 
     rng = np.random.default_rng(SEED)
