@@ -1,0 +1,31 @@
+Checkpoint: /Users/martaarnabatmartin/Desktop/Paper/version 2/outputs/models/surrogate_v2_moefix_long.pt
+Training sims sampled: 40, nodes: 800,000
+Features: ['Mach', 'AoA', 'x_norm', 'span_norm', 'nz', 'Cp_crit', 'q_dyn', 'AoA_sin', 'L_factor']
+
+HIGHEST-FIDELITY EXPRESSION (complexity 20):
+tanh((Mach - (-0.1259304)*nz)**4*(exp(span_norm*x_norm*(Cp_crit - 1*(-0.8473494))) - 0.14556025)**2)**2
+
+Fidelity to neural p_s (held-out nodes): R2 = 0.3671
+Against true shock label: precision 0.6508 recall 0.4512
+
+PARETO FRONT, each scored on 600,000 held-out nodes
+ cplx         R2    prec     rec      F1  equation
+    1     0.0466   0.000   0.000   0.000  q_dyn
+    2     0.0591   0.000   0.000   0.000  tanh(q_dyn)
+    3     0.1275   0.000   0.000   0.000  q_dyn - 0.11110651
+    4     0.1592   0.000   0.000   0.000  square(-0.9406368 + L_factor)
+    5     0.2100   0.786   0.096   0.171  square(q_dyn) * exp(nz)
+    6     0.2449   0.671   0.171   0.273  (nz + 1.999768) * square(q_dyn)
+    7     0.3027   0.654   0.387   0.487  exp(span_norm + nz) * square(q_dyn)
+    8     0.3201   0.635   0.472   0.542  square(q_dyn * (span_norm + sqrt(exp(nz))))
+    9     0.3308   0.664   0.416   0.511  square(q_dyn * (tanh(span_norm) + sqrt(exp(nz))))
+   10     0.3429   0.698   0.391   0.502  square((span_norm + sqrt(exp(nz))) * q_dyn) * Mach
+   12     0.3505   0.691   0.385   0.495  tanh(square(square(q_dyn) * ((exp(span_norm) * 1.5255684) + exp(nz))))
+   13     0.3551   0.657   0.437   0.525  tanh(square((exp(nz) + 1.317591) * (square(q_dyn) * exp(tanh(span_norm)))))
+   14     0.3570   0.643   0.446   0.527  square(square(tanh(exp(sqrt(span_norm)) * (square(q_dyn) * (exp(nz) + 2.2693675)))))
+   16     0.3587   0.666   0.445   0.533  tanh(square(square(q_dyn) * (exp(nz / 0.76487374) + (sqrt(span_norm) * (span_norm + 3.0592394)))))
+   17     0.3613   0.676   0.413   0.513  square(tanh(square((Mach + -0.2873447) * exp((span_norm * (Cp_crit - -0.83282584)) - (nz * -0.27367064)))))
+   18     0.3631   0.657   0.422   0.514  square(square(tanh(square(exp((Cp_crit - -0.62761927) * span_norm) * ((Mach + -0.05079081) - (nz * -0.16105305))))))
+   19     0.3658   0.677   0.427   0.524  square(tanh(square((((x_norm * span_norm) * (Cp_crit - -0.987164)) + 0.8347326) * square(Mach - (nz * -0.11441712)))))
+   20     0.3671   0.651   0.451   0.533  square(tanh(square(square(Mach - (nz * -0.1259304)) * (exp((Cp_crit - -0.8473494) * (span_norm * x_norm)) + -0.14556025))))
+   22     0.3670   0.663   0.439   0.528  square(tanh(square((exp((Cp_crit - -0.8312004) * ((x_norm / Mach) * span_norm)) * square(Mach - (nz * -0.10466096))) + -0.13481107)))
