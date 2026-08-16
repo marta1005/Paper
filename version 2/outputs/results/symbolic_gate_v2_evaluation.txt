@@ -1,0 +1,30 @@
+Checkpoint: /Users/martaarnabatmartin/Desktop/Paper/version 2/outputs/models/surrogate_v2_moefix_long.pt
+Symbolic expression (complexity 29):
+  p_s = Mach*(AoA_sin*(nz + sqrt((AoA_sin + nz)**2) - exp(tanh(AoA_sin/(0.46281323 - x_norm)))) + exp(Cp_crit/sqrt(span_norm)))**2*exp(Cp_crit)
+Features: ['Mach', 'AoA', 'x_norm', 'span_norm', 'nz', 'Cp_crit', 'q_dyn', 'AoA_sin', 'L_factor']
+
+Simulations: 140 (held out; the 16 selection sims excluded)
+
+Agreement of the two gates on p_s itself: R2 = 0.3259   (neural mean 0.2069, symbolic mean 0.2107)
+
+========================================================================================================
+DOWNSTREAM COST OF THE SUBSTITUTION
+========================================================================================================
+Subset     Gate               N pts     R2(Cp)    R2(Cfx)    R2(Cfy)    R2(Cfz)     MAE(Cp)    MAE(Cfx)    MAE(Cfy)    MAE(Cfz)
+-------------------------------------------------------------------------------------------------------------------------------
+global     neural        36,508,360     0.9729     0.9172     0.9027     0.9209    0.027647    0.000226    0.000164    0.000148
+           symbolic      36,508,360     0.9613     0.9172     0.9027     0.9209    0.035441    0.000226    0.000164    0.000148
+           delta                       -0.0116    +0.0000    +0.0000    +0.0000
+
+shock      neural         6,830,670     0.9350     0.8923     0.8692     0.9076    0.040479    0.000399    0.000276    0.000249
+           symbolic       6,830,670     0.8253     0.8923     0.8692     0.9076    0.079503    0.000399    0.000276    0.000249
+           delta                       -0.1096    +0.0000    +0.0000    +0.0000
+
+transonic  neural        26,077,400     0.9842     0.9279     0.9167     0.9321    0.025027    0.000215    0.000157    0.000136
+           symbolic      26,077,400     0.9696     0.9279     0.9167     0.9321    0.037409    0.000215    0.000157    0.000136
+           delta                       -0.0146    +0.0000    +0.0000    +0.0000
+
+subsonic   neural        10,430,960     0.9471     0.9005     0.8839     0.9086    0.041453    0.000302    0.000235    0.000226
+           symbolic      10,430,960     0.9438     0.9005     0.8839     0.9086    0.042095    0.000302    0.000235    0.000226
+           delta                       -0.0033    +0.0000    +0.0000    +0.0000
+
