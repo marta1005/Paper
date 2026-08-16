@@ -145,14 +145,15 @@ def extract(model, scaler, preprocessor, n_sims, per_sim, rng, device):
     return np.vstack(F), np.concatenate(P), np.concatenate(S)
 
 
-def fit_pysr(X, y, niterations, maxsize, out_dir):
+def fit_pysr(X, y, niterations, maxsize, out_dir,
+             populations=40, population_size=100, batch_size=10000):
     from pysr import PySRRegressor
     model = PySRRegressor(
         niterations=niterations,
         binary_operators=['+', '-', '*', '/'],
         unary_operators=['exp', 'tanh', 'sqrt', 'square'],
-        populations=30,
-        population_size=50,
+        populations=populations,
+        population_size=population_size,
         maxsize=maxsize,
         elementwise_loss='loss(x, y) = (x - y)^2',
         model_selection='best',
@@ -160,7 +161,7 @@ def fit_pysr(X, y, niterations, maxsize, out_dir):
         # PySR scores on random mini-batches instead, which is the standard way to
         # run it at this many points.
         batching=True,
-        batch_size=2000,
+        batch_size=batch_size,
         random_state=SEED,
         deterministic=True,
         parallelism='serial',
@@ -180,10 +181,18 @@ def stage_fit(args):
     model  = load_model(Path(args.ckpt), device)
     rng    = np.random.default_rng(SEED)
 
+    cache = ROOT / 'outputs' / 'symbolic_targets.npz'
     print(f'Checkpoint: {args.ckpt}')
-    print(f'Extracting soft p_s over {args.sims} training simulations '
-          f'({args.per_sim:,} nodes each)...')
-    X, p, shock = extract(model, scaler, pre, args.sims, args.per_sim, rng, device)
+    if args.reuse_cache and cache.exists():
+        d = np.load(cache)
+        X, p, shock = d['X'], d['p'], d['shock']
+        print(f'Reusing the cached sample from {cache.name}: {len(p):,} nodes')
+    else:
+        print(f'Extracting soft p_s over {args.sims} training simulations '
+              f'({args.per_sim:,} nodes each)...')
+        X, p, shock = extract(model, scaler, pre, args.sims, args.per_sim, rng, device)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(cache, X=X, p=p, shock=shock)
     print(f'\nCollected {len(p):,} nodes.  p_s mean {p.mean():.4f}  '
           f'true shock {100 * shock.mean():.1f}%')
 
@@ -194,7 +203,10 @@ def stage_fit(args):
 
     t0  = time.time()
     sr  = fit_pysr(X[sel], p[sel], args.niterations, args.maxsize,
-                   ROOT / 'outputs' / 'pysr')
+                   ROOT / 'outputs' / 'pysr',
+                   populations=args.populations,
+                   population_size=args.population_size,
+                   batch_size=args.batch_size)
     dt  = time.time() - t0
 
     # PySR's own "best" trades loss against complexity by a fixed heuristic.  The
@@ -272,6 +284,13 @@ def main():
                    help='nodes actually given to PySR (default 200000)')
     p.add_argument('--niterations', type=int, default=60)
     p.add_argument('--maxsize', type=int, default=20)
+    p.add_argument('--populations', type=int, default=40)
+    p.add_argument('--population-size', type=int, default=100)
+    p.add_argument('--batch-size', type=int, default=10000,
+                   help='nodes each candidate is scored on; too small makes fitness '
+                        'noisy and the search stalls on shallow expressions')
+    p.add_argument('--reuse-cache', action='store_true',
+                   help='reuse outputs/symbolic_targets.npz instead of re-extracting')
     args = p.parse_args()
     stage_fit(args)
 

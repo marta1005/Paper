@@ -1,0 +1,15 @@
+Features: ['Mach', 'AoA', 'x_norm', 'span_norm', 'nz', 'Cp_crit', 'q_dyn', 'AoA_sin', 'L_factor']
+Nodes: 300,000  (225,000 train / 75,000 test)
+Target: p_s from the GNN-latent ShockIndicator
+
+Gradient boosting (400 trees)      R2 = 0.8717   F1 vs true shock = 0.907
+MLP 256-128-64 on the same features R2 = 0.8850   F1 vs true shock = 0.894
+
+Best symbolic expression (PySR)    R2 = 0.3671
+
+Ceiling for any function of these features: R2 = 0.8850
+Gap to the symbolic expression: 0.5179
+
+HEADROOM REMAINS: a black box beats the expression by a wide margin, so the
+local features do carry the signal and the symbolic search was underpowered.
+Increase niterations/maxsize before concluding anything.
