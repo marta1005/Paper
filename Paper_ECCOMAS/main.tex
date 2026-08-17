@@ -6,6 +6,15 @@
 \usepackage{booktabs}
 \usepackage{xcolor}
 \usepackage{float}
+% Let a page carry more float and less text before LaTeX defers to a float page,
+% so figures settle near their reference instead of queueing up at the end.
+\renewcommand{\topfraction}{0.90}
+\renewcommand{\bottomfraction}{0.75}
+\renewcommand{\textfraction}{0.08}
+\renewcommand{\floatpagefraction}{0.70}
+\setcounter{topnumber}{3}
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{4}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,fit,calc}
 \usepackage[colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue]{hyperref}
@@ -120,7 +129,7 @@ value $C_p^{\mathrm{crit}}$, form the supersonic pocket; at the
 transonic freestream Mach numbers sketched there they carry the shock
 label of Eq.~(\ref{eq:labels}).
 
-\begin{figure}[H]
+\begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[font=\small, x=1cm, y=1cm]
 % Axes
@@ -340,7 +349,7 @@ $\mathbf{x}_{\mathrm{base}}$.  No solver output enters at the
 feature-engineering stage.  Table~\ref{tab:features} lists all
 sixteen node features with their physical interpretation.
 
-\begin{table}[H]
+\begin{table}[htbp]
 \centering
 \caption{Per-node feature set $\mathbf{x}\in\mathbb{R}^{16}$, in three
   blocks (base, physics-derived and geometry), of which the lower two
@@ -451,7 +460,7 @@ surface point cloud and the flight condition (from which the kNN
 graph and all node and edge features are derived analytically) but no
 CFD solver output.
 
-\begin{figure}[H]
+\begin{figure}[htbp]
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
@@ -962,7 +971,7 @@ training from scratch under an otherwise identical budget, loss and
 data; this comparison rests on one run per arm, so seed variance
 cannot be excluded.
 
-\begin{figure}[H]
+\begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[
   font=\small,
@@ -1016,7 +1025,7 @@ no part in its own model selection.
 Table~\ref{tab:arch} summarises the architecture and training
 hyperparameters.
 
-\begin{table}[H]
+\begin{table}[htbp]
 \centering
 \footnotesize
 \caption{Architecture and training hyperparameters of AeroSurrogate
@@ -1214,7 +1223,7 @@ although it cannot be said to have motivated it: the classifier was
 trained on a feature set that already contained both, and the
 symbolic stage runs only after the surrogate has been trained.
 
-\begin{figure}[H]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=0.75\textwidth]{figures/feature_importance.png}
 \caption{RandomForest feature importances over the nine point-wise
@@ -1263,7 +1272,7 @@ Being monotone, the calibration changes no ranking; it is a
 rescaling that makes the algebraic score usable as a probability, and
 it is part of what is deployed.
 
-\begin{table}[H]
+\begin{table}[htbp]
 \centering
 \caption{Top of the PySR Pareto front over the nine point-wise
   features (score balances mean-squared-error gain against complexity
@@ -1282,7 +1291,7 @@ it is part of what is deployed.
 \end{tabular}
 \end{table}
 
-\begin{figure}[H]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=0.72\textwidth]{figures/sr_pareto_front.png}
 \caption{PySR Pareto front over the nine point-wise features: MSE on
@@ -1327,7 +1336,7 @@ the sensor is accordingly not its standalone discrimination but the
 end-to-end cost of substituting it for the neural indicator, measured
 in Section~\ref{sec:symgate}.
 
-\begin{figure}[H]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=0.65\textwidth]{figures/symbolic_sensor_map.png}
 \caption{Shock probability predicted by the point-wise symbolic
@@ -1494,7 +1503,7 @@ predecessor on its own sample ($0.8827$): the substitution discards
 the whole of the shock-region gain the spatial architecture was built
 to obtain.
 
-\begin{table}[H]
+\begin{table}[htbp]
 \centering
 \caption{Downstream cost of replacing the spatial ShockIndicator with
   the distilled expression of Eq.~(\ref{eq:srspatial}), on the
@@ -1602,7 +1611,7 @@ systematically below the pressure score and worst-case relative
 errors on $C_{fy}$ and $C_{fz}$ up to twice those of
 $C_p$~\cite{Peter2025}.
 
-\begin{table}[H]
+\begin{table}[htbp]
 \centering
 \caption{Coefficient of determination on the held-out test set: 140
   simulations (36\,508\,360 surface points) disjoint from both
@@ -1630,7 +1639,7 @@ subsonic  & $R^{2}(C_p)$    & 0.9236 & 0.9259 & 0.9303 & \textbf{0.9471} \\
 \end{tabular}
 \end{table}
 
-\begin{table}[H]
+\begin{table}[htbp]
 \centering
 \caption{Reported model on the held-out test set: mean absolute error
   in physical units, together with the confidence-weighted $R^{2}$ of
@@ -1683,7 +1692,7 @@ those validation scores are the selection criterion and not the
 reported accuracy, which Table~\ref{tab:results} measures on the 140
 simulations excluded from selection.
 
-\begin{table}[H]
+\begin{table}[htbp]
 \centering
 \caption{What each correction contributes, isolated on the held-out
   test set, and the inference-time ablation of the shock residual on
@@ -1743,7 +1752,7 @@ construction.  The regime the architecture targets is therefore also
 the regime the loss rewards, and the subsonic scores are best read as
 the price of that choice rather than as a failure of the model.
 
-\begin{figure}[H]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=0.78\textwidth]{figures/v2_training_curve.png}
 \caption{Training history of the reported model (the head-only
@@ -1766,7 +1775,7 @@ statistics use every node.  Those statistics characterise these six
 conditions only and are therefore a different quantity from the
 140-simulation held-out scores of Table~\ref{tab:results}.
 
-\begin{figure}[H]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=0.95\textwidth]{figures/v2_parity_plots.png}
 \caption{Parity plots (AeroSurrogate vs.\ RANS, physical units) for
@@ -1802,6 +1811,28 @@ transposed (rows are CFD, model and error; columns are $C_p$ and
 $\lvert\mathbf{C}_f\rvert$) and with its own colour bars: a field
 scale shared between the CFD and model rows, and an error scale
 symmetric about zero.
+
+\begin{figure}[p]
+\centering
+\includegraphics[height=0.86\textheight]{figures/v2_conditions_cp.png}
+\caption{Pressure coefficient over six held-out flight conditions, one
+  per row: CFD reference (left), AeroSurrogate prediction (centre) and
+  signed error, CFD $-$ model (right), on scales shared by all rows.
+  Left half-model is the lower surface, right half-model the upper.
+  Row labels give $M_{\infty}$, $\alpha$, total pressure $\Pi$
+  (printed $p_i$), simulation index and shock-labelled node fraction.}
+\label{fig:fields_cp}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[height=0.90\textheight]{figures/v2_conditions_cf.png}
+\caption{Skin-friction magnitude
+  $\lvert\mathbf{C}_f\rvert=\lVert(C_{fx},C_{fy},C_{fz})\rVert_{2}$ over
+  the same six held-out conditions and in the same layout as
+  Figure~\ref{fig:fields_cp}.}
+\label{fig:fields_cf}
+\end{figure}
 
 The predicted fields reproduce the characteristic structure of each
 regime.  In the subsonic case (top row) the smooth pressure
@@ -1851,31 +1882,10 @@ spatial pattern on a scale two orders of magnitude smaller, consistent
 with the mean absolute errors of Table~\ref{tab:mae} and with the
 parity plots of Figure~\ref{fig:parity}.
 
-\begin{figure}[p]
-\centering
-\includegraphics[height=0.86\textheight]{figures/v2_conditions_cp.png}
-\caption{Pressure coefficient over six held-out flight conditions, one
-  per row: CFD reference (left), AeroSurrogate prediction (centre) and
-  signed error, CFD $-$ model (right), on scales shared by all rows.
-  Left half-model is the lower surface, right half-model the upper.
-  Row labels give $M_{\infty}$, $\alpha$, total pressure $\Pi$
-  (printed $p_i$), simulation index and shock-labelled node fraction.}
-\label{fig:fields_cp}
-\end{figure}
 
-\begin{figure}[p]
+\begin{figure}[htbp]
 \centering
-\includegraphics[height=0.90\textheight]{figures/v2_conditions_cf.png}
-\caption{Skin-friction magnitude
-  $\lvert\mathbf{C}_f\rvert=\lVert(C_{fx},C_{fy},C_{fz})\rVert_{2}$ over
-  the same six held-out conditions and in the same layout as
-  Figure~\ref{fig:fields_cp}.}
-\label{fig:fields_cf}
-\end{figure}
-
-\begin{figure}[H]
-\centering
-\includegraphics[height=0.80\textheight]{figures/v2_surface_fields_sim147.png}
+\includegraphics[width=0.98\textwidth]{figures/v2_surface_fields_sim147_wide.png}
 \caption{The most demanding condition of the six at full resolution
   ($M_{\infty}{=}0.90$, $\alpha{=}6^{\circ}$, $\Pi{=}4{\times}10^{5}$,
   test simulation 147; $29.3\%$ of its nodes carry a positive shock

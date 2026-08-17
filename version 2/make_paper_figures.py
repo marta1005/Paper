@@ -398,6 +398,76 @@ def _draw_pair(fig, subspec, X, Y, Z, values, cmap, vmin, vmax, lims, annotate):
                       ha='center', va='center', fontsize=8, color='0.35')
 
 
+def plot_surface_fields_wide(coords, fields, cond, sim, field_lims, err_lims,
+                            y_halfwidth, model_tag=DEFAULT_MODEL_TAG):
+    """2 rows (Cp, |Cf|) x 3 columns (CFD | model | error) — the transpose.
+
+    The portrait arrangement (3 rows x 2 columns) comes out 1.67 times taller than
+    wide, which at this class's 455x598pt text box is 623pt tall at any width worth
+    reading: taller than the page itself, so LaTeX can neither set it inline nor fit
+    it on a float page, and it strands white space wherever it lands.  Transposed it
+    is 0.77 as tall as wide, about 330pt at full column width, and behaves like an
+    ordinary figure.  Same panels, same scales, same camera.
+    """
+    X, Y, Z = coords
+    row_labels = [r'$C_p$', r'$|C_f|$']
+    col_labels = ['CFD truth', model_tag, 'Error (CFD $-$ model)']
+    n_row, n_col = 2, 3
+
+    xlim = (float(X.min()) + CAM['xoffsets'][0], float(X.max()) + CAM['xoffsets'][1])
+    ylim = (float(Y.min()), float(Y.min()) + y_halfwidth)
+    zlim = (float(Z.min()) + CAM['zoffsets'][0], float(Z.max()) + CAM['zoffsets'][1])
+
+    grid = dict(GRID); grid.update(top=0.905, bottom=0.175)
+    fig = plt.figure(figsize=(CELL_W * n_col, CELL_H * n_row))
+    fig.suptitle(
+        f'$M_\\infty$={cond["Mach"]:.2f}  AoA={cond["AoA"]:.1f}°  '
+        f'$p_i$={cond["Pi"]:.1f}×10⁵  |  {model_tag}  |  test sim {sim}',
+        fontsize=12, fontweight='bold', y=0.975)
+    gs = gridspec.GridSpec(n_row, n_col, figure=fig, **grid)
+
+    for ci, label in enumerate(col_labels):
+        fig.text(grid['left'] + (ci + 0.5) * (grid['right'] - grid['left']) / n_col,
+                 grid['top'] + 0.014, label, ha='center', va='bottom',
+                 fontsize=11, fontweight='bold')
+
+    row_h = (grid['top'] - grid['bottom']) / n_row
+    cells = [
+        [(fields['cp_true'], 'jet', field_lims[0], False),
+         (fields['cp_pred'], 'jet', field_lims[0], False),
+         (fields['cp_err'],  PASTEL_ERR, err_lims[0], True)],
+        [(fields['cf_true'], 'jet', field_lims[1], False),
+         (fields['cf_pred'], 'jet', field_lims[1], False),
+         (fields['cf_err'],  PASTEL_ERR, err_lims[1], True)],
+    ]
+    for row_i, row in enumerate(cells):
+        fig.text(0.014, grid['top'] - (row_i + 0.5) * row_h, row_labels[row_i],
+                 va='center', ha='center', fontsize=13, fontweight='bold',
+                 rotation=90)
+        for ci, (values, cmap, lim, symmetric) in enumerate(row):
+            vmin, vmax = (-lim, lim) if symmetric else lim
+            _draw_pair(fig, gs[row_i, ci], X, Y, Z, values, cmap, vmin, vmax,
+                       (xlim, ylim, zlim), annotate=(row_i == 0 and ci == 0))
+
+    col_w = (grid['right'] - grid['left']) / n_col
+    bars = [(0, 2, 'jet', field_lims[0], r'$C_p$ (CFD / model)', 0.098),
+            (2, 1, PASTEL_ERR, (-err_lims[0], err_lims[0]),
+             r'error $C_p$', 0.098),
+            (0, 2, 'jet', field_lims[1], r'$|C_f|$ (CFD / model)', 0.040),
+            (2, 1, PASTEL_ERR, (-err_lims[1], err_lims[1]),
+             r'error $|C_f|$', 0.040)]
+    for ci, span, cmap, rng, txt, y0 in bars:
+        cax = fig.add_axes([grid['left'] + (ci + 0.16) * col_w, y0,
+                            (span - 0.32) * col_w, 0.010])
+        sm = plt.cm.ScalarMappable(
+            cmap=cmap, norm=matplotlib.colors.Normalize(vmin=rng[0], vmax=rng[1]))
+        cb = fig.colorbar(sm, cax=cax, orientation='horizontal')
+        cb.set_label(txt, size=9)
+        cb.ax.tick_params(labelsize=7)
+        cb.ax.xaxis.set_label_position('top')
+    return fig
+
+
 def plot_surface_fields(coords, fields, cond, sim, field_lims, err_lims,
                         y_halfwidth, model_tag=DEFAULT_MODEL_TAG):
     """3 rows (CFD | model | error) x 2 columns (Cp, |Cf|)."""
@@ -658,6 +728,8 @@ def parse_args():
     p.add_argument('--parity-dpi', type=int, default=150, help='Parity DPI (default 150)')
     p.add_argument('--no-parity', action='store_true', help='Skip the parity figure')
     p.add_argument('--no-surface', action='store_true', help='Skip the surface figures')
+    p.add_argument('--wide', action='store_true',
+                   help='Lay the per-sim surface figure out landscape (2 rows x 3 columns) instead of portrait, so it fits a page alongside text.')
     p.add_argument('--no-combined', action='store_true',
                    help='Skip the combined figure that puts every condition in one '
                         'image, one row per condition (columns CFD | model | error).')
@@ -798,9 +870,14 @@ def main():
         # the coordinates that are actually drawn (xyz, i.e. after --stride), not
         # on the full set: a strided subsample has slightly different x/z extrema
         # and the seam is only exact for the limits the figure really uses.
+        # The seam solve has to use the geometry actually drawn: the landscape
+        # variant is 2x3, not 3x2, and a probe of the wrong shape leaves the two
+        # mirrored half-model views split.
+        _nr, _nc = (2, 3) if args.wide else (N_FIELD_ROWS, N_FIELD_COLS)
+        _gs_kw   = dict(GRID, top=0.905, bottom=0.175) if args.wide else GRID
         y_halfwidth, solved = _solve_y_halfwidth(
-            fig_size=(CELL_W * N_FIELD_COLS, CELL_H * N_FIELD_ROWS), gs_kw=GRID,
-            n_row=N_FIELD_ROWS, n_col=N_FIELD_COLS,
+            fig_size=(CELL_W * _nc, CELL_H * _nr), gs_kw=_gs_kw,
+            n_row=_nr, n_col=_nc,
             xlim=(float(xyz[0].min()), float(xyz[0].max())),
             zlim=(float(xyz[2].min()), float(xyz[2].max())),
             y_root=float(xyz[1].min()))
@@ -831,9 +908,11 @@ def main():
                 cf_pred=res['cf_pred'][::st],
                 cf_err=(res['cf_true'] - res['cf_pred'])[::st],
             )
-            fig = plot_surface_fields(xyz, fields, res['cond'], s,
-                                      field_lims, err_lims, y_halfwidth)
-            out = out_dir / f'v2_surface_fields_sim{s:03d}{tag}.png'
+            maker = plot_surface_fields_wide if args.wide else plot_surface_fields
+            fig = maker(xyz, fields, res['cond'], s,
+                        field_lims, err_lims, y_halfwidth)
+            suffix = '_wide' if args.wide else ''
+            out = out_dir / f'v2_surface_fields_sim{s:03d}{suffix}{tag}.png'
             fig.savefig(out, dpi=args.dpi, bbox_inches='tight')
             plt.close(fig)
             written.append(out)
