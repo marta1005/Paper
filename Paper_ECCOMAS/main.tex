@@ -4,6 +4,7 @@
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{booktabs}
+\usepackage{longtable}
 \usepackage{xcolor}
 \usepackage{float}
 % Let a page carry more float and less text before LaTeX defers to a float page,
@@ -1025,16 +1026,25 @@ no part in its own model selection.
 Table~\ref{tab:arch} summarises the architecture and training
 hyperparameters.
 
-\begin{table}[htbp]
-\centering
-\footnotesize
+{\footnotesize
+\begin{longtable}{lll}
 \caption{Architecture and training hyperparameters of AeroSurrogate
   (4\,603\,918 parameters in total).}
-\label{tab:arch}
-\begin{tabular}{lll}
+\label{tab:arch}\\
 \toprule
 \textbf{Component} & \textbf{Parameter} & \textbf{Value} \\
 \midrule
+\endfirsthead
+\multicolumn{3}{l}{\footnotesize\itshape Table~\ref{tab:arch}, continued}\\
+\toprule
+\textbf{Component} & \textbf{Parameter} & \textbf{Value} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{3}{r}{\footnotesize\itshape continued on the next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
 Graph          & Neighbourhood & kNN, $k=8$, directed ($j\in\mathrm{kNN}(i)$) \\
                & Size per simulation & $N = 260\,774$, $E = 2\,086\,192$ \\
                & Edge features & $(\delta x,\delta y,\delta z,
@@ -1087,9 +1097,8 @@ Optimisation   & Optimiser & AdamW ($\beta_1{=}0.9$, $\beta_2{=}0.999$) \\
 \midrule
 All MLP blocks & Hidden layers & LayerNorm + SiLU + Dropout(0.1) \\
                & Exception & the gating network uses no dropout \\
-\bottomrule
-\end{tabular}
-\end{table}
+\end{longtable}
+}
 
 \subsection{Inference pipeline}
 \label{sec:inference}
