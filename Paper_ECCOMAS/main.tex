@@ -29,63 +29,37 @@
 \shortauthors{Marta Arnabat-Mart\'{\i}n}
 
 \address{%
-$^{*}$ Flight Physics Technology and Capability\\
-Airbus Defence and Space, C/ Aviocar 2, 28906 Getafe, Madrid, Spain \\
-Universidad Polit\'{e}cnica de Madrid, Plaza Cardenal Cisneros, 3, Madrid, 28040, Spain\\
-e-mail: marta.arnabt-martin@airbus.com \\[12pt]
-
-$^{\P}$ Flight Physics Technology and Capability\\
-Airbus Defence and Space, C/ Aviocar 2, 28906 Getafe, Madrid, Spain \\
-e-mail: andres.mateo@airbus.com \\
-e-mail: sven\_agustin-lanzan@airbus.com \\[12pt]
-$^{\dag}$ Applied Mathematics department - School of aeronautics\\
-Universidad Polit\'{e}cnica de Madrid, Plaza Cardenal Cisneros, 3, Madrid, 28040, Spain\\
-Center of Computational Simulation, Universidad Polit\'{e}cnica de Madrid, Campus de Montegancedo, Boadilla del Monte, 28660 Madrid, Spain
-
+$^{*}$ Flight Physics Technology and Capability, Airbus Defence and Space,
+C/ Aviocar 2, 28906 Getafe, Madrid, Spain; and Universidad Polit\'{e}cnica
+de Madrid, Plaza Cardenal Cisneros 3, 28040 Madrid, Spain\\
+e-mail: marta.arnabt-martin@airbus.com \\[6pt]
+$^{\P}$ Flight Physics Technology and Capability, Airbus Defence and Space,
+C/ Aviocar 2, 28906 Getafe, Madrid, Spain\\
+e-mail: andres.mateo@airbus.com, sven\_agustin-lanzan@airbus.com \\[6pt]
+$^{\dag}$ Applied Mathematics Department, School of Aeronautics, and Center
+of Computational Simulation, Universidad Polit\'{e}cnica de Madrid,
+28040 Madrid, Spain
 }
 
 \keywords{shock capture, mixture of experts, graph neural network,
 Gumbel-Softmax routing, physics-informed machine learning, RANS surrogate}
 
-\summary{A physics-aware machine learning surrogate is presented for the
-prediction of aerodynamic surface coefficients $[C_p, C_{fx}, C_{fy},
-C_{fz}]$ on a transonic transport configuration, requiring no CFD solver
-at inference.  The model, AeroSurrogate, couples a spatial backbone
-with three heads: an eight-layer message-passing graph neural network
-over a $k$-nearest-neighbour graph of the surface ($k=8$) maps every
-node to a 256-dimensional latent, from which a shock indicator estimates
-the probability that the node lies inside the supersonic pocket, a
-shock-gated Mixture of Experts predicts $C_p$, and an independent head
-predicts the friction vector as a magnitude and a unit direction.  The
-four smooth experts specialise spatially, their mean routing weights
-differing between shock and non-shock nodes by a total variation of
-$0.3581$, while a dedicated shock expert contributes an additive
-residual scaled by the predicted shock probability, providing an
-explicit mechanism for the pressure discontinuity that smooth networks
-systematically blur; ablating that residual at inference triples the
-$C_p$ mean absolute error on shock nodes, from $0.0458$ to $0.1370$.
-All shock labels are derived from real RANS surface pressures via the
-critical pressure coefficient.  No isentropic pseudo-labels are used.
-Trained on RANS surface data of the ONERA CRM WBPN database spanning
-Mach $0.30$--$0.96$ and angle of attack from $-15^{\circ}$ to
-$+15^{\circ}$, and then fine-tuned head-only with the backbone frozen,
-the model achieves $R^{2}=0.9729$ for $C_p$ and $R^{2}$ between $0.9027$
-and $0.9209$ for the skin-friction components over 36\,508\,360 held-out
-surface points from 140 simulations that took no part in model
-selection, with $4.6\times 10^{6}$ parameters.  A closed-form shock
-criterion recovered by symbolic regression from the same physics
-labels is reported separately, as a
-result about the point-wise predecessor of this model: substituting it
-there for the neural gate costs $0.0085$ in $R^{2}(C_p)$ and $0.1005$ in
-$R^{2}(C_{fy})$.  The same distillation applied to the spatial
-indicator independently recovers that expression's core (the
-critical pressure coefficient inside an exponential over span-wise
-station) but attains only $R^{2}=0.4095$ against the indicator's
-output where an unconstrained model on the same nine features reaches
-$0.8850$, and substituting it costs $0.1096$ of shock-subset
-$R^{2}(C_p)$ against $0.0168$ for the corresponding substitution in
-the point-wise model: interpretability grows more expensive as the
-indicator grows richer.}
+\summary{AeroSurrogate is a physics-aware machine learning surrogate
+for the surface coefficients $[C_p, C_{fx}, C_{fy}, C_{fz}]$ on a
+transonic transport configuration, requiring no CFD solver at
+inference.  An eight-layer message-passing graph neural network over a
+$k$-nearest-neighbour graph of the surface maps every node to a latent
+read by a shock indicator, a shock-gated Mixture of Experts for $C_p$
+and a friction head.  The shock expert adds a residual scaled by the
+predicted shock probability, an explicit mechanism for the
+discontinuity: ablating it triples the $C_p$ mean absolute error on
+shock nodes, from $0.0458$ to $0.1370$.  Shock labels derive from real
+RANS pressures via the critical pressure coefficient, not from
+isentropic pseudo-labels.  Trained on the ONERA CRM WBPN database and
+fine-tuned head-only with the backbone frozen, it reaches
+$R^{2}=0.9729$ for $C_p$ and $0.9027$--$0.9209$ for the skin-friction
+components over 36\,508\,360 held-out surface points from 140
+simulations excluded from model selection.}
 
 \begin{document}
 \maketitle
@@ -94,165 +68,38 @@ indicator grows richer.}
 \section{INTRODUCTION}
 % ================================================================
 
-Transonic aerodynamic flows are characterised by the coexistence of
-subsonic and supersonic regions separated by shock waves.  In cruise
-configurations, normal shocks on wing surfaces produce strong adverse
-pressure gradients that drive boundary-layer thickening, flow
-separation, and buffet onset.  These phenomena are central to the
-determination of drag-divergence Mach number and the structural loads
-envelope~\cite{Vassberg2008,Levy2013}.  Fast and accurate prediction
-of surface aerodynamic loading across the full flight envelope is
-therefore a fundamental requirement for aerodynamic analysis pipelines
-that must operate at high frequency, such as adjoint-based shape
-optimisation, digital-twin monitoring, or real-time loads estimation.
+In transonic flight, normal shocks on wing surfaces produce strong
+adverse pressure gradients that drive boundary-layer thickening,
+separation and buffet onset, and so govern the drag-divergence Mach
+number and the structural loads envelope~\cite{Vassberg2008,Levy2013}.
+Reynolds-Averaged Navier--Stokes (RANS) solvers resolve that structure
+at $\mathcal{O}(10^{3}$--$10^{4})$ CPU-hours per operating condition,
+which rules them out of high-frequency pipelines such as shape
+optimisation or real-time loads estimation.  Machine learning
+surrogates are the practical alternative~\cite{Han2018,Bhatnagar2019},
+but a single smooth network trained across subsonic, transonic and
+separated regimes learns an interpolant that blurs the shock and
+underestimates peak suction, because the smeared solution lowers the
+average error over the predominantly smooth remainder of the
+surface.
 
-Reynolds-Averaged Navier--Stokes (RANS) solvers provide physical
-ground truth for shock structure but at a computational cost of
-$\mathcal{O}(10^{3}$--$10^{4})$ CPU-hours per operating condition.
-Machine learning (ML) surrogate models have emerged as a practical
-alternative for rapid aerodynamic
-prediction~\cite{Han2018,Bhatnagar2019,Sekar2019}.  A central
-challenge in transonic aerodynamics is regime non-uniformity: the
-relationship between surface geometry, flight condition, and
-aerodynamic loading changes qualitatively across subsonic, transonic,
-and separated flow regimes.  A single multi-layer perceptron (MLP)
-trained on data spanning all regimes learns a smooth interpolant that
-systematically blurs shock discontinuities, underestimating peak
-suction and misrepresenting the pressure-recovery gradient aft of the
-shock (Figure~\ref{fig:pathology}).  This smoothing pathology is
-structural: a smooth network can
-only approximate a step change in $C_p$ with an error proportional to
-its activation range, and gradient-based training actively favours
-the smeared solution because it reduces average error over the
-predominantly smooth surface.  In Figure~\ref{fig:pathology} the
-points above the dotted line, where $C_p$ falls below the critical
-value $C_p^{\mathrm{crit}}$, form the supersonic pocket; at the
-transonic freestream Mach numbers sketched there they carry the shock
-label of Eq.~(\ref{eq:labels}).
+Existing machine learning shock indicators work at the volumetric
+field level, from neural troubled-cell indicators~\cite{Ray2018} to
+their convolutional successors~\cite{Discacciati2020}.  They require
+volumetric data, inaccessible in the surface-only setting of
+experimental aerodynamics or flight test, and commonly rely on
+pseudo-labels from isentropic assumptions on the inputs, which renders
+the problem circular.  Physics-informed neural
+networks~\cite{Raissi2019} avoid the pseudo-labels but need the
+governing equations embedded explicitly.
 
-\begin{figure}[htbp]
-\centering
-\begin{tikzpicture}[font=\small, x=1cm, y=1cm]
-% Axes
-\draw[-{Stealth[length=2mm]}] (0,0) -- (8.4,0) node[below left=1mm]{$x/c$};
-\draw[-{Stealth[length=2mm]}] (0,0) -- (0,4.3) node[below right=1mm]{$-C_p$};
-% Sonic threshold
-\draw[densely dotted, thick] (0,2.1) -- (8,2.1);
-\node[anchor=east] at (-0.05,2.1)
-  {\scriptsize $-C_p^{\mathrm{crit}}(M)$};
-\node[align=center] at (2.9,2.55)
-  {\scriptsize supersonic pocket, $y_{\mathrm{shock}}{=}1$};
-% RANS curve
-\draw[very thick, blue!70!black]
-  (0,0.4) .. controls (0.05,2.6) and (0.15,3.1) .. (0.5,3.2)
-  .. controls (2.0,3.28) and (3.6,3.1) .. (4.4,2.95)
-  -- (4.55,1.05)
-  .. controls (6.0,0.85) and (7.0,0.7) .. (8,0.55);
-% Smooth MLP curve
-\draw[very thick, red!75!black, dashed]
-  (0,0.4) .. controls (0.05,2.4) and (0.15,2.85) .. (0.5,2.95)
-  .. controls (1.8,3.0) and (2.4,2.9) .. (2.9,2.75)
-  .. controls (4.2,2.3) and (5.2,1.25) .. (6.2,0.9)
-  .. controls (7.0,0.72) .. (8,0.55);
-% Annotations
-\draw[-{Stealth[length=1.8mm]}, gray] (6.15,3.0) -- (4.62,2.2);
-\node[align=left] at (6.9,3.1) {\scriptsize sharp shock (RANS)};
-\draw[-{Stealth[length=1.8mm]}, gray] (6.5,1.55) -- (5.15,1.45);
-\node[align=left] at (7.25,1.6) {\scriptsize smeared recovery\\[-3pt]
-  \scriptsize (smooth MLP)};
-% Legend
-\draw[very thick, blue!70!black] (1.0,4.05) -- (1.5,4.05)
-  node[right, black]{\scriptsize RANS reference};
-\draw[very thick, red!75!black, dashed] (4.0,4.05) -- (4.5,4.05)
-  node[right, black]{\scriptsize single smooth MLP};
-\end{tikzpicture}
-\caption{Illustrative sketch of the shock-smoothing pathology:
-  chord-wise $-C_p$ distribution on the upper wing in transonic flow,
-  RANS reference (solid) against a single smooth MLP (dashed).}
-\label{fig:pathology}
-\end{figure}
-
-Existing ML shock indicators address discontinuity detection at the
-volumetric field level.  Ray and Hesthaven~\cite{Ray2018,Ray2019}
-pioneered neural network troubled-cell indicators for finite-element
-solution fields; Discacciati et al.~\cite{Discacciati2020} and
-Schwander et al.~\cite{Schwander2021} extended these with
-convolutional architectures, and Morgan et al.~\cite{Morgan2020}
-developed field-level indicators for Lagrangian hydrodynamics.  Two
-limitations are shared across these approaches: (i)~they require
-volumetric field data inaccessible in the surface-only measurement
-context of experimental aerodynamics or flight test, and (ii)~they
-commonly rely on pseudo-labels derived from isentropic assumptions
-applied to input features, introducing a definitional circularity.
-Physics-informed neural networks~\cite{Raissi2019,Karniadakis2021}
-offer an alternative route but require embedding governing equations
-explicitly and are computationally intensive to train.
-
-The interpretability of ML models for physical discovery constitutes
-a parallel active frontier.  Symbolic regression (SR)
-methods such as SINDy~\cite{Brunton2016}, Eureqa~\cite{Schmidt2009},
-and PySR~\cite{Cranmer2020} have demonstrated that compact,
-human-readable governing equations can be recovered from data, and
-recent benchmarks~\cite{LaCava2021,Angelis2023} have shown their
-maturity across physical domains.  However, their application to
-aerodynamic shock physics at industrial scale, and in particular
-their use \emph{inside} a deployed surrogate as a functional
-component rather than a post-hoc explanation, has not been
-demonstrated.
-
-This work addresses both gaps with \emph{AeroSurrogate}, an
-architecture that predicts the four surface aerodynamic coefficients
-$[C_p, C_{fx}, C_{fy}, C_{fz}]$ at every mesh node of a transonic
-transport configuration from surface geometry and flight condition
-alone.  The model reported here is AeroSurrogate, a
-$4.6\times 10^{6}$-parameter spatial network; the symbolic shock
-criterion of Section~\ref{sec:sr} is a result about its point-wise
-predecessor, and is labelled as such throughout, while
-Section~\ref{sec:srspatial} reports what the same distillation yields
-when it is turned on the spatial indicator.  The four main contributions
-are:
-\begin{enumerate}
-  \item A \emph{spatial backbone}: an eight-layer message-passing graph
-        neural network over a per-simulation $k$-nearest-neighbour
-        graph of the surface ($k=8$), which replaces the point-wise
-        input vector of the point-wise model and lifts $R^{2}(C_p)$ from $0.9506$ to
-        $0.9729$ and $R^{2}(C_{fy})$ from $0.8463$ to $0.9027$; the two
-        sets of scores come from different test protocols, compared in
-        Section~\ref{sec:results}.
-  \item A \emph{shock-gated Mixture of Experts} in which four smooth
-        experts specialise over the surface and a dedicated shock
-        expert contributes an additive residual scaled by a learned
-        shock probability, an explicit architectural mechanism for the
-        pressure discontinuity that single smooth networks cannot
-        represent.  Ablating that residual at inference triples the
-        $C_p$ mean absolute error on shock nodes, from $0.0458$ to
-        $0.1370$.
-  \item A \emph{ShockIndicator} network that reads the backbone latent,
-        so that shock detection is a neighbourhood rather than a
-        point-wise operation, supervised exclusively on labels derived
-        from real RANS surface pressures via the critical pressure
-        coefficient criterion (requiring no solver at inference and no
-        isentropic pseudo-labels at training) and reaching
-        $F_1 = 0.9421$ against those labels over eight held-out
-        simulations.
-  \item A \emph{two-stage training schedule}: end-to-end pre-training
-        followed by a head-only fine-tune with the backbone frozen.
-        This outperforms joint training from scratch by
-        $+0.0149$ in global $R^{2}(C_p)$ and by $+0.0394$ inside the
-        shock region on the held-out set, on a single run per arm.
-\end{enumerate}
-
-The remainder of the paper is organised as follows.
-Section~\ref{sec:dataset} describes the simulation database, the
-16-dimensional feature vector, and the physics-based shock labelling.
-Section~\ref{sec:method} presents the AeroSurrogate architecture, the
-routing mechanism, and the training procedure.
-Section~\ref{sec:sr} details the symbolic regression stage and the
-symbolic-gate retraining carried out for the point-wise model, and
-the distillation of the spatial indicator into the same feature
-space.
-Section~\ref{sec:results} reports results on the held-out test set, and
-Section~\ref{sec:conclusions} draws conclusions.
+This work addresses both gaps with \emph{AeroSurrogate}, a
+$4.6\times 10^{6}$-parameter spatial architecture predicting
+$[C_p, C_{fx}, C_{fy}, C_{fz}]$ at every mesh node from surface
+geometry and flight condition alone: shock detection becomes a
+neighbourhood operation on a graph-network latent, the discontinuity
+receives a dedicated expert, and the labels come from real RANS
+surface pressures rather than from an isentropic assumption.
 
 % ================================================================
 \section{DATASET AND PROBLEM FORMULATION}
@@ -262,145 +109,64 @@ Section~\ref{sec:conclusions} draws conclusions.
 \subsection{Configuration and simulation database}
 
 The ONERA Common Research Model Wing--Body--Pylon--Nacelle
-(CRM~WBPN)~\cite{Vassberg2008,Levy2013} is a high-fidelity
-industry-standard benchmark for transonic transport aerodynamics.
-This work builds on the CRM WBPN machine-learning database recently
-released by ONERA~\cite{Peter2025}: 468 steady RANS simulations
-computed with the elsA solver on a 39.5M-cell structured Chimera
-mesh, using the Spalart--Allmaras turbulence model with quadratic
-constitutive relation (QCR) and fixed transition (imposed laminar
-zones up to 10\% chord on the wing).  The design of experiments
-spans 13 freestream Mach numbers $M \in [0.30,\,0.96]$, twelve
-angles of attack per Mach number within
-$\alpha \in [-15^{\circ},\,+15^{\circ}]$ (with progressively narrower
-ranges at the highest Mach numbers), and three stagnation pressures
-$\Pi \in \{1,\,2,\,4\}\times 10^{5}$~Pa covering the Reynolds-number
-envelope.  Surface data (pressure coefficient $C_p$ and
-skin-friction components $C_{fx}$, $C_{fy}$, $C_{fz}$) are provided
-at $n_p = 260\,774$ wall points per condition, i.e.\ roughly 122
-million surface points in total.  The dataset is partitioned
-\emph{at the simulation level} following the ONERA regression
-challenge: 312 conditions ($\approx$81.4M points) for training and
-156 held-out conditions ($\approx$40.7M points) for testing, so that
-no flight condition seen during training appears in the test set.
-All 312 training-partition conditions are used for training: the
-sixteen simulations on which early stopping selects the checkpoint
-are drawn from the test partition instead
-(Section~\ref{sec:training}).  Those sixteen are consequently
-excluded from every test metric reported in this paper, which is
-computed over the remaining 140 simulations, comprising 36\,508\,360
-surface points that influenced neither training nor model selection.
-The prediction target at each surface point is
-$\mathbf{y} = [C_p,\,C_{fx},\,C_{fy},\,C_{fz}] \in \mathbb{R}^{4}$;
-the node features and the targets are standardised (z-score) with
-training-set statistics, while the edge features introduced below
-reach the network unnormalised, in physical units.
+(CRM~WBPN)~\cite{Vassberg2008,Levy2013} is an industry-standard
+benchmark for transonic transport aerodynamics.  This work builds on
+the CRM WBPN machine-learning database~\cite{Peter2025}: 468 steady
+RANS simulations spanning $M \in [0.30,\,0.96]$,
+$\alpha \in [-15^{\circ},\,+15^{\circ}]$ and stagnation pressures
+$\Pi \in \{1,\,2,\,4\}\times 10^{5}$~Pa, each supplying the target
+$\mathbf{y} = [C_p,\,C_{fx},\,C_{fy},\,C_{fz}] \in \mathbb{R}^{4}$ at
+every wall point.  Following the ONERA regression challenge the split
+is \emph{at the simulation level}, 312 training conditions against 156
+held out; the sixteen simulations on which early stopping selects the
+checkpoint are drawn from the test partition, so every metric reported
+here uses the remaining 140 (Section~\ref{sec:training}).  Features
+and targets are standardised (z-score) with training-set statistics,
+the edge features of Section~\ref{sec:backbone} excepted.
 
 \subsection{Feature engineering}
 
-Each surface point is characterised by nine base features:
-\begin{equation}
-  \mathbf{x}_{\mathrm{base}}
-  = \bigl[x,\;y,\;z,\;n_x,\;n_y,\;n_z,\;M,\;\alpha,\;
-          \Pi{\times}10^{-5}\bigr]
-  \in \mathbb{R}^{9}
-  \label{eq:xbase}
-\end{equation}
-where $(x,y,z)$ are surface coordinates normalised by the reference
-chord, $(n_x,n_y,n_z)$ is the outward unit normal, $M$ is the
-freestream Mach number, $\alpha$ is the angle of attack in degrees,
-and $\Pi$ is the freestream total pressure.  Five physics-derived
-features are appended, each computed analytically from
-$\mathbf{x}_{\mathrm{base}}$ alone:
-\begin{equation}
-  \begin{aligned}
-    q_{\mathrm{dyn}} &= \frac{M^{2}}{2}, \\
-    \Pi_{\mathrm{norm}} &= \frac{\Pi}{1+\tfrac{\gamma-1}{2}M^{2}}, \\
-    \mathrm{AoA}_{\sin} &= \sin\alpha
-  \end{aligned}
-  \label{eq:derived1}
-\end{equation}
-\begin{equation}
-  \begin{aligned}
-    L_{\mathrm{factor}} &=
-      \frac{\sqrt{1-M^{2}}}{1+\tfrac{\gamma-1}{2}M^{2}}, \\
-    C_{p}^{\mathrm{crit}}(M) &=
-      \frac{2}{\gamma M^{2}}\!\left[
-        \left(\frac{2}{\gamma+1}+\frac{\gamma-1}{\gamma+1}M^{2}\right)^{\!\!
-          \gamma/(\gamma-1)}\!\!\!-\,1\right]
-  \end{aligned}
-  \label{eq:cpcrit}
-\end{equation}
-where $\gamma = 1.4$ for air.  Here $\Pi_{\mathrm{norm}}$ normalises
-the total pressure by the isentropic temperature ratio, making the
-feature independent of the absolute pressure level; $L_{\mathrm{factor}}$
-combines the Prandtl--Glauert compressibility factor $\sqrt{1-M^{2}}$
-with the same denominator, providing a Laitone-type compressibility
-scale that goes to zero at the sonic limit.  The quantity $C_{p}^{\mathrm{crit}}(M)$ is the
-pressure coefficient at which the local flow reaches the sonic
-condition ($M_{\mathrm{local}}=1$) under isentropic assumptions; it
-is the key physical threshold used for shock labelling.  Finally, two
-geometry features are computed from the spatial statistics of the
-mesh: the chord-wise position $x_{\mathrm{norm}}\in[0,1]$ (0 at the
-leading edge, 1 at the trailing edge) and the span-wise position
-$\eta = \mathrm{span}_{\mathrm{norm}}\in[0,1]$ (0 at the root, 1 at
-the tip).  The full per-node input vector is therefore
-$\mathbf{x}\in\mathbb{R}^{16}$; all derived features require only
-$\mathbf{x}_{\mathrm{base}}$.  No solver output enters at the
-feature-engineering stage.  Table~\ref{tab:features} lists all
-sixteen node features with their physical interpretation.
+Each surface point carries the sixteen features of
+Table~\ref{tab:features}: nine base variables, five compressibility
+features computed analytically from them, and two geometry features,
+supplied explicitly because the shock on a transonic transport wing
+sits at a characteristic chord fraction and strengthens over the
+mid-span region.  The last of these, the critical pressure coefficient
+$C_{p}^{\mathrm{crit}}(M)$, is the isentropic value of $C_p$ at which
+the local flow first reaches $M_{\mathrm{local}}=1$; it is the
+threshold used for the shock labelling below.  No solver output enters
+at this stage.
 
 \begin{table}[htbp]
 \centering
-\caption{Per-node feature set $\mathbf{x}\in\mathbb{R}^{16}$, in three
-  blocks (base, physics-derived and geometry), of which the lower two
-  are computed from the upper block alone.}
+\scriptsize
+\caption{Per-node feature set $\mathbf{x}\in\mathbb{R}^{16}$; the
+  physics and geometry blocks are computed from the base block alone,
+  with $\gamma=1.4$ for air.}
 \label{tab:features}
-\begin{tabular}{lll}
+\begin{tabular}{lp{117mm}}
 \toprule
-\textbf{Feature} & \textbf{Group} & \textbf{Physical meaning} \\
+\textbf{Block} & \textbf{Features} \\
 \midrule
-$x,\;y,\;z$        & Base & Normalised surface coordinates \\
-$n_x,\;n_y,\;n_z$ & Base & Outward unit normal components \\
-$M$                & Base & Freestream Mach number \\
-$\alpha$           & Base & Angle of attack (deg) \\
-$\Pi{\times}10^{-5}$ & Base & Freestream total pressure \\
-\midrule
-$q_{\mathrm{dyn}}$    & Physics & Dimensionless dynamic pressure proxy $M^{2}/2$ \\
-$\Pi_{\mathrm{norm}}$ & Physics & Mach-adjusted total pressure $\Pi/(1+\frac{\gamma-1}{2}M^{2})$ \\
-$\mathrm{AoA}_{\sin}$ & Physics & $\sin(\alpha)$, lift-relevant projection \\
-$L_{\mathrm{factor}}$ & Physics & Laitone compressibility factor $\sqrt{1-M^{2}}/(1+\frac{\gamma-1}{2}M^{2})$ \\
-$C_{p}^{\mathrm{crit}}$ & Physics & Critical $C_p$ at sonic condition (Eq.~\ref{eq:cpcrit}) \\
-\midrule
-$x_{\mathrm{norm}}$ & Geometry & Chord-wise position [0 = LE, 1 = TE] \\
-$\eta$ (span$_{\mathrm{norm}}$) & Geometry & Span-wise position [0 = root, 1 = tip] \\
+Base (9) & $x,y,z$, coordinates normalised by the reference chord;
+  $n_x,n_y,n_z$, outward unit normal; Mach number $M$; angle of attack
+  $\alpha$ (deg); total pressure $\Pi{\times}10^{-5}$ \\
+Physics (5) & $q_{\mathrm{dyn}}=M^{2}/2$;
+  $\Pi_{\mathrm{norm}}=\Pi/(1+\tfrac{\gamma-1}{2}M^{2})$;
+  $\mathrm{AoA}_{\sin}=\sin\alpha$;
+  $L_{\mathrm{factor}}=\sqrt{1-M^{2}}/(1+\tfrac{\gamma-1}{2}M^{2})$,
+  the Laitone compressibility scale;
+  $C_{p}^{\mathrm{crit}}=(2/\gamma M^{2})\bigl[(\tfrac{2}{\gamma+1}
+  +\tfrac{\gamma-1}{\gamma+1}M^{2})^{\gamma/(\gamma-1)}-1\bigr]$ \\
+Geometry (2) & $x_{\mathrm{norm}}\in[0,1]$, chord-wise position, 0 at
+  the leading edge; $\eta\in[0,1]$, span-wise station, 0 at the root \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The two geometry features are consistent with the feature-importance
-analysis of Section~\ref{sec:srresults}, in which chord-wise and
-span-wise position rank as the two most informative variables for
-shock localisation: the shock on a transonic transport wing sits at a
-characteristic chord fraction and strengthens over the mid-span
-region, so providing these coordinates explicitly relieves the
-network from having to infer them from raw $(x,y,z)$.
-
-The sixteen node features are not the whole input.  Because the present model treats
-a simulation as a graph rather than as a bag of independent points, a
-$k$-nearest-neighbour graph over its $n_p$ surface points is derived
-from the same raw columns: the neighbour relation is computed from
-the coordinates alone, and each of the resulting $E = k\,n_p$
-directed edges carries five features built from the coordinates and
-the normals of its two endpoints.  With $k=8$ this adds
-$E = 2\,086\,192$ edges per simulation.  The construction is given in
-Section~\ref{sec:backbone}; like the node features it uses no solver
-output, and because only the point coordinates enter it, no mesh
-connectivity is required and a bare surface point cloud suffices.
-
 \subsection{Shock label generation from RANS output}
 
-A binary shock label is defined for each surface point using the RANS
+A binary shock label is defined for each surface point from the RANS
 solver output:
 \begin{equation}
   y_{\mathrm{shock}} =
@@ -410,60 +176,32 @@ solver output:
     \mathbf{1}\!\left[M > 0.75\right]
   \label{eq:labels}
 \end{equation}
-The first factor identifies surface points where the RANS-predicted
-pressure coefficient falls below the sonic threshold.  That is the
-condition for a locally supersonic flow above the boundary layer,
-i.e.\ the footprint of the supersonic pocket terminated by the shock.
-The second restricts the label to the transonic part of the envelope:
-below a freestream Mach number of $0.75$ an excursion past the
-critical value is not the wing shock the model is asked to capture,
-so such points are labelled negative and supervised as negatives.
-The same $M > 0.75$ threshold separates the \emph{transonic} and
-\emph{subsonic} subsets on which results are reported in
-Section~\ref{sec:results}, and the \emph{shock} subset used there is
-the transonic points that additionally satisfy
-$C_{p}^{\mathrm{RANS}} < C_{p}^{\mathrm{crit}}(M)$.  Critically,
-$C_{p}^{\mathrm{RANS}}$ is a solver output embedding viscous,
-turbulent, and compressibility effects; the threshold
-$C_{p}^{\mathrm{crit}}$ is a well-established physical criterion, not
-a model assumption applied to the inputs.  This distinguishes the
-present labelling strategy from pseudo-label approaches that derive
-shock indicators directly from the input
-features~\cite{Ray2018,Discacciati2020}, which would render the
-learning problem circular.  The labels are used \emph{only during
-training}; at inference the model receives the node features and the
-derived graph alone.  Under this definition $18.7\%$ of the surface
-points of the held-out partition carry a positive shock label
-(6\,830\,670 of 36\,508\,360).
+The first factor marks the footprint of the supersonic pocket
+terminated by the shock, the second restricts the label to the
+transonic envelope.  Because $C_{p}^{\mathrm{RANS}}$ is a solver
+output rather than an isentropic estimate from the inputs, the
+labelling is not circular; the labels are used only in training.  The
+same $M > 0.75$ threshold separates the \emph{transonic} and
+\emph{subsonic} subsets of Section~\ref{sec:results}, whose
+\emph{shock} subset is the transonic points that also satisfy
+$C_{p}^{\mathrm{RANS}} < C_{p}^{\mathrm{crit}}(M)$, $18.7\%$ of the
+held-out partition (6\,830\,670 of 36\,508\,360).
 
 % ================================================================
 \section{METHODOLOGY: THE AEROSURROGATE ARCHITECTURE}
 \label{sec:method}
 % ================================================================
 
-AeroSurrogate is a single end-to-end trainable model with a spatial
-backbone and three prediction heads.  An eight-layer message-passing
-GNN over a per-simulation $k$-nearest-neighbour graph of the surface
-($k=8$, Section~\ref{sec:backbone}) maps each node to a
-256-dimensional latent $\mathbf{h}_i$; a
-\emph{ShockIndicator} estimates from $\mathbf{h}_i$ the probability
-$p_{s,i}$ that the node lies inside the supersonic pocket; a
-\emph{shock-gated Mixture of Experts} (ShockGatedMoE) predicts the
-pressure coefficient $C_p$ from $[\mathbf{h}_i\,\|\,p_{s,i}]$; and a
-separate \emph{FrictionHead} predicts the friction vector
-$(C_{fx},C_{fy},C_{fz})$ from $\mathbf{h}_i$ as a magnitude and a unit
-direction.  Figure~\ref{fig:architecture} shows the complete
-architecture and data flow.  The total parameter count is
-4\,603\,918, of which 3\,472\,640 ($75.4\%$) lie in the GNN backbone,
-43\,713 in the ShockIndicator, 755\,529 in the Mixture of Experts and
-332\,036 in the FrictionHead.  At inference the model requires the
-surface point cloud and the flight condition (from which the kNN
-graph and all node and edge features are derived analytically) but no
-CFD solver output.
+AeroSurrogate, shown in Figure~\ref{fig:architecture}, is a single
+end-to-end trainable model: an eight-layer message-passing GNN over a
+per-simulation $k$-nearest-neighbour graph maps each node to a
+256-dimensional latent $\mathbf{h}_i$ feeding a shock indicator, a
+shock-gated mixture of experts for $C_p$ and a friction head;
+3\,472\,640 of its 4\,603\,918 parameters lie in the backbone.
 
 \begin{figure}[htbp]
 \centering
-\resizebox{\textwidth}{!}{%
+\resizebox{0.88\textwidth}{!}{%
 \begin{tikzpicture}[
   font=\small,
   blk/.style={draw, rounded corners=2pt, align=center,
@@ -563,33 +301,20 @@ CFD solver output.
 \subsection{Spatial backbone}
 \label{sec:backbone}
 
-The backbone is the component that distinguishes AeroSurrogate from its
-point-wise predecessor, and it carries $75.4\%$ of the parameters.
-
-The \textbf{graph} is built once per simulation.  Its $N =
-260\,774$ nodes are the surface mesh points, each carrying the
-sixteen-dimensional feature vector $\mathbf{x}_i$ of
-Table~\ref{tab:features}.  Its edges are the $k$-nearest-neighbour
-relation of the node coordinates, computed with a KD-tree and with
-self-edges excluded; with $k=8$ this gives $E = 8N = 2\,086\,192$
-directed edges $(i \to j)$ for $j \in \mathrm{kNN}(i)$.  Only the
-coordinates enter the construction, so no mesh connectivity is
-required and a bare point cloud suffices.  Each edge carries the
-five-dimensional feature
-$\mathbf{e}_{ij} = (\delta x, \delta y, \delta z,
-\|\boldsymbol{\delta}\|, \mathbf{n}_i\!\cdot\!\mathbf{n}_j)$, where
-$\boldsymbol{\delta}$ is the displacement from $i$ to $j$ and
-$\mathbf{n}$ the unit surface normal, so that the network is given
-both the local metric and the local curvature of the surface.
-
-\textbf{Message passing} proceeds as follows.  A node encoder
-$16\!\to\!128\!\to\!256$ lifts $\mathbf{x}_i$ to a latent
-$\mathbf{h}_i \in \mathbb{R}^{256}$ and an edge encoder
-$5\!\to\!64\!\to\!128$ lifts $\mathbf{e}_{ij}$.  Each of the eight
-message-passing layers then computes a message at the source of every
-edge, aggregates the incoming messages at the destination by
-concatenated mean and maximum, and applies a residual update
-normalised by LayerNorm:
+The graph is built once per simulation: its $N = 260\,774$ nodes are
+the surface mesh points carrying the sixteen features of
+Section~\ref{sec:dataset}, its edges the $k=8$ nearest neighbours of
+the node coordinates, $E = 8N = 2\,086\,192$ directed edges from a
+KD-tree, so no mesh connectivity is required and a bare point cloud
+suffices.  Each edge carries $\mathbf{e}_{ij} = (\delta x, \delta y,
+\delta z, \|\boldsymbol{\delta}\|,
+\mathbf{n}_i\!\cdot\!\mathbf{n}_j)$.  A node encoder
+$16\!\to\!128\!\to\!256$ lifts $\mathbf{x}_i$ to
+$\mathbf{h}_i\in\mathbb{R}^{256}$ and an edge encoder
+$5\!\to\!64\!\to\!128$ lifts $\mathbf{e}_{ij}$; each of the eight
+message-passing layers then applies a residual update normalised by
+LayerNorm~\cite{Ba2016}, messages being aggregated at the destination
+by concatenated mean and maximum:
 \begin{equation}
   \mathbf{m}_{i\to j} =
     \phi_{m}\bigl([\mathbf{h}_i \,\|\, \mathbf{e}_{ij}]\bigr),
@@ -600,264 +325,77 @@ normalised by LayerNorm:
   \label{eq:backbone}
 \end{equation}
 with $\phi_m: 384\!\to\!256\!\to\!256$ and
-$\phi_u: 768\!\to\!256\!\to\!256$.  The relation is deliberately
-\emph{not} symmetrised: messages are emitted at the source and
-scattered to the destination, so node $j$ pools over its reverse-kNN
-neighbourhood, whose size varies across the surface because
-$k$-nearest-neighbour adjacency is not a symmetric relation.  Dense
-regions of the mesh therefore aggregate over more incoming edges than
-sparse ones, which is the behaviour wanted where the mesh is refined
-around the shock.
-
-The \textbf{depth} of eight layers gives an eight-hop
+$\phi_u: 768\!\to\!256\!\to\!256$.  Eight layers give an eight-hop
 receptive field, so each latent summarises a patch of surface rather
-than a point.  The residual connection and LayerNorm on every layer
-are what make that depth usable: without them, eight successive rounds
-of mean/max aggregation collapse the latents towards a common value.
-Storing the activations of eight layers over a graph of this size does
-not fit in device memory, so the backbone is trained with activation
-checkpointing, trading one extra forward pass per layer during the
-backward pass for activation memory independent of depth.  This is
-what allows a whole simulation to be a single optimiser step.
-Checkpointing is disabled when the backbone is frozen, where the
-recomputation would be pure overhead.
+than a point.  All hidden layers use LayerNorm, SiLU~\cite{Elfwing2018}
+and dropout 0.1, the gate excepted.
 
-\subsection{ShockIndicator}
-\label{sec:indicator}
-
-The ShockIndicator is an MLP with layer sizes
-$256\!\to\!128\!\to\!64\!\to\!32\!\to\!1$; every hidden layer applies
-LayerNorm~\cite{Ba2016}, SiLU activation~\cite{Elfwing2018}, and
-dropout (rate 0.1), and the final layer is linear:
-\begin{equation}
-  \begin{aligned}
-    \mathrm{shock\_logit}_i &=
-      f_{\mathrm{SI}}(\mathbf{h}_i;\theta_{\mathrm{SI}}) \in \mathbb{R}, \\
-    p_{s,i} &= \sigma(\mathrm{shock\_logit}_i) \in [0,1]
-  \end{aligned}
-  \label{eq:indicator}
-\end{equation}
-Crucially, the indicator no longer reads the raw point features but
-the backbone latent $\mathbf{h}_i$, which after eight rounds of
-message passing already summarises an eight-hop neighbourhood.  The
-sensor is therefore \emph{spatial}: it can condition on the local
-pressure-gradient structure that defines a shock, and not only on the
-point's own state.
-
-It is supervised by the RANS-derived label $y_{\mathrm{shock}}$
-through a binary cross-entropy term (Section~\ref{sec:loss}).  Note
-that this label is a conjunction, so $p_s$ estimates the probability
-that a point lies in a supersonic pocket \emph{and} that the
-free-stream is transonic; it is trained to read zero on a genuinely
-supersonic pocket occurring at $M \le 0.75$, and is therefore a
-detector of the transonic shock regime rather than of local
-supersonic flow as such.  Measured against that label on eight
-held-out test simulations, the reported model attains precision
-$0.8964$, recall $0.9927$ and $F_1 = 0.9421$, with a mean $p_s$ of
-$0.9765$ on labelled shock nodes against $0.0317$ elsewhere.
-
-The indicator is trained inside the surrogate rather than as a
-separate pretraining stage, but the reported model is nevertheless
-produced by a two-stage schedule: end-to-end training followed by a
-head-only fine-tune with the backbone frozen
-(Section~\ref{sec:training}).  The scalar $p_s$ serves simultaneously
-as (i)~an input to the routing gate, (ii)~the multiplicative gain of
-the shock expert, and (iii)~an interpretable shock-detection output in
-its own right.  It acts on the $C_p$ branch only: the friction head of
-Section~\ref{sec:friction} is not gated by it.
-
-\subsection{Shock-gated Mixture of Experts}
+\subsection{ShockIndicator and shock-gated experts}
 \label{sec:moe}
 
-The ShockGatedMoE comprises a gating network, $K=4$ smooth experts and
-one shock expert, and predicts the pressure coefficient alone; the
-friction vector is produced by a separate head
-(Section~\ref{sec:friction}).  The \textbf{gate} receives the
-concatenation $[\mathbf{h}_i\,\|\,p_{s,i}]\in\mathbb{R}^{257}$ and
-maps it through $257\!\to\!128\!\to\!64\!\to\!4$ (LayerNorm + SiLU on
-the hidden layers, no dropout) to $K$ routing logits $\mathbf{l}_i$.
-Routing is therefore conditioned on the node's aggregated spatial
-context (which already encodes the flight condition, the chord-wise
-and span-wise station and the neighbourhood pressure
-structure) together with the estimated shock state.  Each
-\textbf{smooth expert} is an MLP
-$256\!\to\!256\!\to\!256\!\to\!128\!\to\!1$ (LayerNorm + SiLU +
-dropout).
+The ShockIndicator is an MLP $256\!\to\!128\!\to\!64\!\to\!32\!\to\!1$
+with a sigmoid output $p_{s,i}\in[0,1]$, supervised by
+$y_{\mathrm{shock}}$, Eq.~(\ref{eq:labels}), through the cross-entropy
+term of Eq.~(\ref{eq:loss}).  Reading the backbone latent rather than
+the raw point features makes it \emph{spatial}: it conditions on the
+pressure-gradient structure that defines a shock, and since the label
+is a conjunction it detects the transonic shock regime rather than
+local supersonic flow.  On eight held-out test simulations it attains
+precision $0.8964$, recall $0.9927$ and $F_1 = 0.9421$.
 
-Because the point-wise gate saw only the point's own feature vector, its
-experts could specialise at most per flight condition.  The present gate is
-per node, so any specialisation it develops is spatial, and it has
-been measured rather than assumed.  Over eight held-out test
-simulations the mean gate weight of expert $E_0$ rises from $0.1451$
-off shock to $0.4722$ on labelled shock nodes, while $E_2$ falls from
-$0.3144$ to $0.0631$; the total variation between the two
-distributions is $0.3581$.  The specialisation emerges from routing
-rather than from explicit labels, as in classical and sparse mixtures
-of experts~\cite{Jacobs1991,Shazeer2017}.  We do not claim a partition
-of the flight envelope into named regimes: no such partition has been
-measured.  The value $K=4$ is inherited unchanged from the point-wise
-predecessor and was not re-tuned here; a sweep over $K$ is left to
-future work.
-
-The \textbf{shock expert} is a smaller MLP
-$256\!\to\!128\!\to\!128\!\to\!1$ whose output enters the prediction as
-an additive residual scaled by $p_s$, correcting $C_p$ only:
+The ShockGatedMoE predicts the pressure coefficient alone.  Its gate
+maps $[\mathbf{h}_i\,\|\,p_{s,i}]\in\mathbb{R}^{257}$ through
+$257\!\to\!128\!\to\!64\!\to\!4$ to $K=4$ routing logits
+$\mathbf{l}_i$; each smooth expert is an MLP
+$256\!\to\!256\!\to\!256\!\to\!128\!\to\!1$ and the shock expert a
+smaller $256\!\to\!128\!\to\!128\!\to\!1$ entering as an additive
+residual scaled by $p_s$:
 \begin{equation}
   \hat{C}_{p,i} =
-    \underbrace{\sum_{k=1}^{K} g_{k}(\mathbf{h}_i, p_{s,i})\,
-                f_{k}(\mathbf{h}_i)}_{\text{smooth MoE output}}
-    \;+\;
-    \underbrace{p_{s,i}\, f^{\mathrm{shock}}(\mathbf{h}_i)}_{\text{shock residual}}
+    \sum_{k=1}^{K} g_{k}(\mathbf{h}_i, p_{s,i})\, f_{k}(\mathbf{h}_i)
+    \;+\; p_{s,i}\, f^{\mathrm{shock}}(\mathbf{h}_i)
   \label{eq:forward_cp}
 \end{equation}
-
-The shock residual is the key architectural innovation.  A smooth
-decoder over the spatial latent can only approximate a discontinuous
-function by smearing it.  The smoothing pathology now sits downstream
-of the eight-layer backbone rather than on raw point features, but it
-is not removed by it.  Assigning one of the standard experts to
-shocked flow does not help either, since that expert would still need
-to be simultaneously differentiable and sharply discontinuous.  The
-residual formulation instead mirrors the physics: the total loading is
-decomposed into a smooth background plus a shock perturbation.  In
-subsonic flow $p_s\!\approx\!0$ and the correction vanishes
-identically; inside the supersonic pocket $p_s\!\approx\!1$ and the
-shock expert supplies the learned pressure-jump correction.  The
-transition sharpness is inherited from the sigmoid of the
-ShockIndicator rather than being limited by the smoothness of the
-regression experts.  The construction deliberately parallels
-classical shock-capturing practice in numerical schemes, where
-localised artificial dissipation is activated only near
-discontinuities flagged by a sensor~\cite{Discacciati2020,
-Schwander2021}: here both the sensor ($p_s$) and the local
-correction ($f^{\mathrm{shock}}$) are learned, but the design
-principle of separating the treatment of the discontinuity from the
-smooth approximation is the same.
-
-The contribution of the residual can be measured directly by deleting
-the term at inference from an otherwise unchanged model.  On the
-labelled shock nodes of eight held-out test simulations this triples
-the $C_p$ mean absolute error, from $0.0458$ to $0.1370$; equivalently,
-the residual removes $66.6\%$ of the error the model would otherwise
-incur there.  On those same nodes the residual carries $43.4\%$ of the
-magnitude of the smooth term.
+The residual splits the loading into a smooth background and a shock
+perturbation whose sharpness is inherited from the sigmoid of the
+indicator: it vanishes where $p_s\!\approx\!0$ and supplies the learned
+pressure jump inside the supersonic pocket, as in sensor-activated
+shock capturing~\cite{Discacciati2020}, except that here both sensor
+and correction are learned.  Because the gate is per node its
+specialisation is spatial rather than per condition: the mean weight
+of expert $E_0$ rises from $0.1451$ off shock to $0.4722$ on labelled
+shock nodes, emerging from routing rather than from explicit
+labels~\cite{Jacobs1991,Shazeer2017}.  In training the gate uses the
+Gumbel-Softmax relaxation~\cite{Jang2017},
+$\mathbf{g}_i = \mathrm{softmax}\bigl((\mathbf{l}_i+\mathbf{G}_i)/
+\tau\bigr)$ with $G_k = -\log(-\log u_k)$ and $\tau$ annealed from
+$1.0$ to $0.3$ over 200 epochs; at inference it is a deterministic
+softmax, close to one-hot at a mean per-node entropy of $0.080$
+against $\log K = 1.3863$.
 
 \subsection{Friction head}
 \label{sec:friction}
 
-The friction vector is predicted by a head that reads $\mathbf{h}_i$
-in parallel with the $C_p$ branch and factorises the prediction into a
-magnitude and a unit direction.  A magnitude branch
-$256\!\to\!256\!\to\!256\!\to\!128\!\to\!1$ produces a log-magnitude,
-which is clipped to $[-10,5]$ and exponentiated; a direction branch
-$256\!\to\!256\!\to\!256\!\to\!128\!\to\!3$ produces an unnormalised
-direction, which is $L_2$-normalised:
+The friction vector is predicted by a head reading $\mathbf{h}_i$ in
+parallel with the $C_p$ branch and factorised into a magnitude and a
+unit direction, since $\|\mathbf{C}_f\|$ spans orders of magnitude
+over the surface: branches $256\!\to\!256\!\to\!256\!\to\!128\!\to\!1$
+and $256\!\to\!256\!\to\!256\!\to\!128\!\to\!3$ give a log-magnitude,
+clipped and exponentiated, and an $L_2$-normalised direction,
 \begin{equation}
-  \begin{aligned}
-    \hat{\mathbf{C}}_{f,i} &=
-      \exp\!\bigl(\mathrm{clip}(f_{\mathrm{mag}}(\mathbf{h}_i),\,-10,\,5)\bigr)\;
-      \frac{f_{\mathrm{dir}}(\mathbf{h}_i)}{\|f_{\mathrm{dir}}(\mathbf{h}_i)\|}, \\
-    \hat{\mathbf{y}}_i &= \bigl[\hat{C}_{p,i},\;\hat{\mathbf{C}}_{f,i}\bigr]
-  \end{aligned}
+  \hat{\mathbf{C}}_{f,i} =
+    \exp\!\bigl(\mathrm{clip}(f_{\mathrm{mag}}(\mathbf{h}_i),\,-10,\,5)\bigr)\;
+    \frac{f_{\mathrm{dir}}(\mathbf{h}_i)}{\|f_{\mathrm{dir}}(\mathbf{h}_i)\|}
   \label{eq:forward_cf}
 \end{equation}
-The factorisation is motivated by the two quantities behaving very
-differently.  Skin-friction magnitude spans several orders of
-magnitude over the surface, from the stagnation region to the
-separated wake, which is why it is learned in the logarithm; the
-direction, by contrast, is a bounded quantity constrained to the local
-tangent plane, and its errors are best penalised by an angle.  The two
-are supervised separately by the two halves of
-Eq.~(\ref{eq:fric}).  Replacing the point-wise model's shared four-output experts with
-this dedicated head, together with the spatial backbone, is what lifts
-$R^{2}(C_{fy})$ from $0.8463$ to $0.9027$.
+The head is not gated by $p_s$, so the discontinuity mechanism acts on
+the pressure alone.
 
-Two properties of the head are worth stating explicitly because the
-architecture diagram could otherwise suggest the opposite.  First, it
-is \emph{not} gated by $p_s$ and does not see the gate weights: it
-consumes the backbone latent alone, so the explicit discontinuity
-mechanism acts on the pressure field only.  Second, at 332\,036
-parameters it accounts for $7.2\%$ of the model.
+\subsection{Loss function and training}
+\label{sec:loss}\label{sec:training}
 
-\subsection{Gumbel-Softmax routing}
-\label{sec:gumbel}
-
-Hard (argmax) expert selection would make the gradients of all
-non-selected experts vanish and collapse training.  During training
-the gate therefore uses the Gumbel-Softmax
-relaxation~\cite{Jang2017,Maddison2017}, which provides
-differentiable, near-one-hot routing as the temperature $\tau$ is
-annealed.  The relaxation is applied to \emph{every} node whenever the
-model is in training mode; the branch is on the mode, not on the flow
-regime:
-\begin{equation}
-  \begin{aligned}
-    \mathbf{g}_i &=
-    \begin{cases}
-      \mathrm{softmax}\!\bigl((\mathbf{l}_i+\mathbf{G}_i)/\tau\bigr) &
-        \text{training (all nodes)}\\[2pt]
-      \mathrm{softmax}(\mathbf{l}_i/\tau)       & \text{inference}
-    \end{cases} \\[4pt]
-    G_k &= -\log(-\log u_k),\;\; u_k \sim \mathcal{U}(0,1)
-  \end{aligned}
-  \label{eq:routing}
-\end{equation}
-where the $G_k$ are i.i.d.\ samples of the standard Gumbel
-distribution.  Perturbing the logits with Gumbel noise before the
-tempered softmax is equivalent to sampling an expert from the
-categorical distribution defined by $\mathbf{l}_i$ as $\tau \to 0$,
-while keeping the routing differentiable with respect to the gate
-parameters at every finite temperature.  This is precisely the
-reparameterisation trick for discrete
-variables~\cite{Jang2017,Maddison2017}.  The straight-through variant
-is not used: the relaxed weights themselves multiply the expert
-outputs, so the mixture stays soft throughout training.  The
-temperature is annealed \emph{linearly} in the epoch index,
-\begin{equation}
-  \begin{aligned}
-    \tau(t) &= \tau_{0} + \frac{t}{T-1}\,(\tau_{T}-\tau_{0}), \\
-    \tau_{0} &= 1.0,\quad \tau_{T}=0.3,\quad T=200,
-  \end{aligned}
-  \label{eq:tau}
-\end{equation}
-and the schedule restarts at $\tau_0$ for the second, head-only
-training stage.  At inference the gate uses a deterministic softmax at
-the temperature stored in the selected checkpoint.  Because
-checkpoints are written at the best validation epoch rather than at
-the end of the schedule, the reported model operates at
-$\tau = 0.5884$ rather than at $\tau_T$.  The routing it produces is
-nevertheless close to one-hot: the mean per-node gate entropy measured
-over eight held-out test simulations is $0.080$, against a maximum of
-$\log K = 1.3863$.
-
-\subsection{Normalisation and activation choices}
-\label{sec:norm}
-
-All hidden layers in AeroSurrogate use LayerNorm and SiLU, a
-deliberate departure from the common BatchNorm + ReLU recipe.
-BatchNorm computes batch statistics during training but applies
-running averages at inference; with the strongly heterogeneous data
-distribution across flight conditions this introduced a systematic
-train/evaluation gap in early experiments.  LayerNorm normalises each
-sample over its feature dimensions and therefore behaves identically
-at training and inference, eliminating the gap entirely.  SiLU
-($x\,\sigma(x)$)~\cite{Elfwing2018,Ramachandran2017} is smooth and
-avoids the dead-neuron pathology that ReLU can exhibit in combination
-with LayerNorm, and consistently outperformed ReLU-family activations
-on this regression task.  In addition, every message-passing layer
-applies a LayerNorm to its residual sum, Eq.~(\ref{eq:backbone}); this
-pairing of residual connection and normalisation is what keeps eight
-successive rounds of mean/max aggregation from over-smoothing the
-latents.  Dropout (rate 0.1) is applied in every MLP block of the
-model with a single exception: the gating network is built without it,
-the Gumbel relaxation of Section~\ref{sec:gumbel} already supplying
-stochasticity on the routing path.
-
-\subsection{Loss function}
-\label{sec:loss}
-
-Training minimises a four-term objective, evaluated over the $N$ nodes
-of one simulation graph:
+Training minimises a four-term objective over the $N$ nodes of one
+simulation graph:
 \begin{equation}
   \begin{split}
     \mathcal{L} ={}&
@@ -873,14 +411,9 @@ of one simulation graph:
   \end{split}
   \label{eq:loss}
 \end{equation}
-where the load-balance and friction terms are
-\begin{equation}
-  \begin{aligned}
-    H(\bar{\mathbf{g}}) &= -\sum_{k=1}^{K}\bar{g}_k\log\bar{g}_k, \\
-    \bar{g}_k &= \frac{1}{N}\sum_{i=1}^{N} g_{i,k}
-  \end{aligned}
-  \label{eq:lb}
-\end{equation}
+with load balance
+$H(\bar{\mathbf{g}}) = -\sum_{k}\bar{g}_k\log\bar{g}_k$,
+$\bar{g}_k = N^{-1}\sum_i g_{i,k}$, and friction term
 \begin{equation}
   \mathcal{L}_{\mathrm{fric}} =
     \frac{1}{N}\sum_{i=1}^{N}
@@ -893,667 +426,41 @@ where the load-balance and friction terms are
       \bigl(1-\cos(\hat{\mathbf{C}}_{f,i},\mathbf{C}_{f,i})\bigr)
   \label{eq:fric}
 \end{equation}
-and the weights are
-\begin{equation}
-  \begin{aligned}
-    w_i &= 1 + \lambda_{\mathrm{sw}}\,y_{\mathrm{shock},i}, \\
-    \lambda_{s} &= 0.1,\quad \lambda_{\mathrm{lb}}=0.01,\quad
-      \lambda_{\mathrm{sw}}=5.0,\quad \lambda_{\mathrm{fric}}=3.0
-  \end{aligned}
-  \label{eq:weights}
-\end{equation}
-Here $w_f$ is the per-simulation confidence weight
-\texttt{confidence\_weight\_simple} shipped with the database, which
-takes exactly two values, $1.0$ and $0.5$, the latter at the extreme
-incidences where the reference solutions are least converged.  It is
-the ONERA regression-challenge weighting, which is what makes the
-weighted $R^{2}$ reported in Section~\ref{sec:results} comparable with
-the challenge reference results.  Both $\mathcal{L}_{\mathrm{fric}}$
-terms are evaluated after affine denormalisation to physical units.
+Here $w_i = 1 + \lambda_{\mathrm{sw}}\,y_{\mathrm{shock},i}$,
+$\lambda_{s}=0.1$, $\lambda_{\mathrm{lb}}=0.01$,
+$\lambda_{\mathrm{sw}}=5.0$ and $\lambda_{\mathrm{fric}}=3.0$, so
+shock nodes carry $6\times$ weight in the $C_p$ term and none in the
+friction one; $w_f\in\{1.0,\,0.5\}$ is the ONERA regression-challenge
+confidence weight shipped with the database, which scales the two
+regression terms alone and makes the weighted $R^{2}$ of
+Section~\ref{sec:results} comparable with the reference results.  The
+load-balance entropy is \emph{maximised}, that is, subtracted from the
+minimised objective: it vanishes when the gate collapses onto a single
+expert, so adding it instead drives the very collapse it is meant to
+prevent (Section~\ref{sec:results}); here it settles at $1.3827$,
+$99.7\%$ of uniform.
 
-The \emph{shock-weighted $C_p$ MSE} assigns $6\times$ loss weight to
-points carrying a positive shock label.  Because that label itself
-conjoins $C_p < C_p^{\mathrm{crit}}$ with $M > 0.75$, subsonic points
-whose $C_p$ dips below the critical value (physically ambiguous at
-low Mach) are labelled negative, and are therefore both weighted at
-unity and supervised as negatives by the BCE term; no separate Mach
-indicator is needed in $w_i$.  The reweighting applies to the $C_p$
-term alone: the friction objective carries the per-simulation weight
-$w_f$ but never the node weight $w_i$, so shock nodes receive no
-special treatment in the friction branch.  The \emph{BCE term}
-supervises the ShockIndicator with positive-class weight 5.0 to
-compensate for label imbalance; under the present label the measured
-positive rate is $21.0\%$ (438\,984 of 2\,086\,192 nodes over eight
-test simulations).  Neither it nor the load-balance term is multiplied
-by $w_f$, which scales the two regression terms alone.
+Training runs in two stages, \emph{stage~A} end-to-end from scratch
+and \emph{stage~B} a head-only fine-tune resuming from that checkpoint
+with the backbone frozen, which is the reported model.  Optimisation
+uses AdamW, peak learning rate $10^{-3}$ after three warmup epochs
+cosine-annealed to $10^{-6}$, weight decay $10^{-5}$, gradient-norm
+clipping at 1.0, and up to 200 epochs per stage with patience 8;
+activation checkpointing makes one simulation graph a single optimiser
+step.  Checkpoints are
+selected on the \emph{unweighted} $R^{2}(C_p)$ over the 16 validation
+simulations drawn from the \emph{test} split; the point-wise baseline
+is quoted from its own protocol, a $10\%$ random sample of all 156
+test simulations, 4\,068\,074 points, so its column of
+Table~\ref{tab:results} is not measured on the same population.
 
-The \emph{load-balance term} is the entropy $H(\bar{\mathbf{g}})$ of
-the batch-averaged gate distribution, Eq.~(\ref{eq:lb}), which is
-\emph{maximised} (that is, subtracted from the minimised objective).
-It attains its maximum $\log K = 1.3863$ under perfectly uniform
-routing and vanishes when the gate collapses onto a single expert.  It
-plays the role of the auxiliary load-balancing losses used in sparse
-mixtures of experts~\cite{Shazeer2017,Fedus2022}, but is not the same
-functional form: those penalise a squared usage moment, whereas
-Eq.~(\ref{eq:lb}) rewards the entropy directly.  On the reported model
-the term settles at $1.3827$, $99.7\%$ of uniform, with no expert
-falling below $1\%$ of the routing mass.  The sign of this term is not
-a cosmetic detail: adding the entropy to a minimised objective instead
-of subtracting it drives the gate towards collapse rather than away
-from it, and an earlier run trained that way collapsed onto a single
-expert (Section~\ref{sec:results}).  Finally, the \emph{friction
-term}, Eq.~(\ref{eq:fric}), separates a log-magnitude mean-squared
-error from a cosine direction error, the latter down-weighted where
-the true friction vector is small and its direction correspondingly
-ill-conditioned.
-
-\subsection{Training procedure}
-\label{sec:training}
-
-The complete workflow consists of four steps
-(Figure~\ref{fig:pipeline}): (1)~\emph{preprocessing}, in which the
-seven physics and geometry features are derived from the nine raw
-columns and the z-score scalers and chord/span bounds are fitted on
-the training split; (2)~\emph{graph construction}, in which a $k=8$
-kNN graph per simulation is built with a KD-tree over the node
-coordinates, annotated with the five-dimensional edge features and
-cached to disk for all 468 simulations; (3)~\emph{stage~A}, end-to-end
-training of the whole model from scratch; and (4)~\emph{stage~B}, a
-head-only fine-tune resuming from that checkpoint with the backbone
-frozen, which is the reported model.  All four terms of
-Eq.~(\ref{eq:loss}) are active in both training stages, and the
-temperature schedule of Eq.~(\ref{eq:tau}) restarts at $\tau_0$ at the
-beginning of stage~B.  Freezing the backbone in stage~B holds the
-3\,472\,640 backbone parameters ($75.4\%$ of the model) fixed, so
-only the heads are updated.  Measured on the held-out test set,
-the two-stage schedule improves the global $R^{2}(C_p)$ by $0.0149$
-and the shock-region $R^{2}(C_p)$ by $0.0394$ over joint end-to-end
-training from scratch under an otherwise identical budget, loss and
-data; this comparison rests on one run per arm, so seed variance
-cannot be excluded.
-
-\begin{figure}[htbp]
-\centering
-\begin{tikzpicture}[
-  font=\small,
-  stepblk/.style={draw, rounded corners=2pt, align=center,
-               minimum height=14mm, inner sep=4pt, text width=31mm},
-  arrow/.style={-{Stealth[length=2.2mm]}, thick}
-]
-\node[stepblk, fill=gray!12]  (s1) {\textbf{1. Preprocess}\\
-  {\scriptsize 16 node features,\\ scalers, spatial bounds}};
-\node[stepblk, fill=violet!10, right=5mm of s1]  (s2) {\textbf{2. Build kNN cache}\\
-  {\scriptsize $k{=}8$ KD-tree, 468 graphs,\\ $2.09$M edges each}};
-\node[stepblk, fill=blue!10, right=5mm of s2]  (s3) {\textbf{3. Stage A}\\
-  {\scriptsize train end-to-end\\ from scratch}};
-\node[stepblk, fill=green!12, right=5mm of s3]  (s4) {\textbf{4. Stage B}\\
-  {\scriptsize freeze backbone,\\ fine-tune heads}};
-\draw[arrow] (s1) -- (s2);
-\draw[arrow] (s2) -- (s3);
-\draw[arrow] (s3) -- (s4);
-\end{tikzpicture}
-\caption{Four-step training pipeline.  Steps 1--2 run once on CPU (the
-  kNN cache is the dominant preprocessing cost) and steps 3--4 run on
-  GPU.  Step 4 produces the reported model.}
-\label{fig:pipeline}
-\end{figure}
-
-Optimisation uses AdamW ($\beta_1=0.9$, $\beta_2=0.999$) with a peak
-learning rate of $10^{-3}$ reached after three epochs of linear warmup
-and then cosine-annealed to $10^{-6}$, weight decay $10^{-5}$,
-gradient-norm clipping at 1.0, and one full simulation graph
-(260\,774 nodes, 2\,086\,192 edges) per optimiser step.  Each stage
-runs for up to 200 epochs, with validation every two epochs and early
-stopping after eight consecutive non-improving checks; the reported
-model reaches its best validation score at epoch 118 and stops on
-patience at epoch 134.  Checkpoints are selected on the
-\emph{unweighted} $R^{2}(C_p)$ over a fixed subset of 16 validation
-simulations, so that selection is biased neither by the training-time
-shock reweighting nor by the per-simulation confidence weights.
-
-Those 16 validation simulations are drawn from the \emph{test} split,
-so early stopping does see test simulations.  Every accuracy figure
-reported in Section~\ref{sec:results} is therefore computed on the
-remaining 140 simulations (36\,508\,360 surface points), which never
-influenced model selection.  The point-wise baseline figures are quoted from
-their own protocol: a 10\% random sample of all 156 test
-simulations, 4\,068\,074 points.  The point-wise and present-model
-columns of Table~\ref{tab:results} are therefore not measured on the same
-population.  The point-wise model did, however, select its checkpoint
-on a slice of the training partition, so its test simulations played
-no part in its own model selection.
-
-Table~\ref{tab:arch} summarises the architecture and training
-hyperparameters.
-
-{\footnotesize
-\begin{longtable}{lll}
-\caption{Architecture and training hyperparameters of AeroSurrogate
-  (4\,603\,918 parameters in total).}
-\label{tab:arch}\\
-\toprule
-\textbf{Component} & \textbf{Parameter} & \textbf{Value} \\
-\midrule
-\endfirsthead
-\multicolumn{3}{l}{\footnotesize\itshape Table~\ref{tab:arch}, continued}\\
-\toprule
-\textbf{Component} & \textbf{Parameter} & \textbf{Value} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{3}{r}{\footnotesize\itshape continued on the next page}\\
-\endfoot
-\bottomrule
-\endlastfoot
-Graph          & Neighbourhood & kNN, $k=8$, directed ($j\in\mathrm{kNN}(i)$) \\
-               & Size per simulation & $N = 260\,774$, $E = 2\,086\,192$ \\
-               & Edge features & $(\delta x,\delta y,\delta z,
-                                  \|\boldsymbol{\delta}\|,
-                                  \mathbf{n}_i\!\cdot\!\mathbf{n}_j)$ \\
-\midrule
-Backbone       & Node encoder & $16{\to}128{\to}256$ \\
-               & Edge encoder & $5{\to}64{\to}128$ \\
-               & Message passing & 8 layers, $384{\to}256{\to}256$ \\
-               & Update & $768{\to}256{\to}256$ \\
-               & Aggregation & mean $\|$ max, residual $+$ LayerNorm \\
-               & Latent / parameters & $d = 256$ / 3\,472\,640 \\
-\midrule
-ShockIndicator & Layers & $256{\to}128{\to}64{\to}32{\to}1$, sigmoid \\
-               & Parameters & 43\,713 \\
-\midrule
-Gate           & Layers & $257{\to}128{\to}64{\to}4$ \\
-               & Routing (training) & Gumbel-Softmax, \texttt{hard=False} \\
-               & Routing (inference) & tempered softmax \\
-               & Temperature & $\tau: 1.0 \to 0.3$ (linear in epoch) \\
-\midrule
-Smooth experts & Number $K$ & 4 \\
-               & Layers (each) & $256{\to}256{\to}256{\to}128{\to}1$ \\
-               & Output / parameters & $C_p$ only / 663\,556 \\
-\midrule
-Shock expert   & Layers & $256{\to}128{\to}128{\to}1$ \\
-               & Coupling / parameters & residual, scaled by $p_s$ / 50\,049 \\
-\midrule
-Friction head  & Magnitude branch & $256{\to}256{\to}256{\to}128{\to}1$ \\
-               & Direction branch & $256{\to}256{\to}256{\to}128{\to}3$ \\
-               & Reconstruction & $\exp(\mathrm{clip}(\cdot,-10,5))
-                                  \times$ unit direction \\
-               & Parameters & 332\,036 \\
-\midrule
-Loss           & $\lambda_{s}$ / $\lambda_{\mathrm{lb}}$ /
-                 $\lambda_{\mathrm{sw}}$ / $\lambda_{\mathrm{fric}}$
-                 & 0.1 / 0.01 / 5.0 / 3.0 \\
-               & BCE positive-class weight & 5.0 \\
-               & Load balance & entropy of the mean gate (maximised) \\
-               & Shock label & $\mathbf{1}[C_p^{\mathrm{RANS}} <
-                               C_p^{\mathrm{crit}}(M)] \wedge
-                               \mathbf{1}[M > 0.75]$ \\
-\midrule
-Optimisation   & Optimiser & AdamW ($\beta_1{=}0.9$, $\beta_2{=}0.999$) \\
-               & Learning rate & $10^{-3}$, 3-epoch warmup, cosine to $10^{-6}$ \\
-               & Weight decay / clipping & $10^{-5}$ / $\|\nabla\|_2 \le 1.0$ \\
-               & Optimiser step & one full simulation graph \\
-               & Epochs / early stopping & 200 / validate every 2, patience 8 \\
-               & Memory & activation checkpointing in the backbone \\
-\midrule
-All MLP blocks & Hidden layers & LayerNorm + SiLU + Dropout(0.1) \\
-               & Exception & the gating network uses no dropout \\
-\end{longtable}
-}
-
-\subsection{Inference pipeline}
-\label{sec:inference}
-
-At inference, no CFD solver output is required.  The deployed model
-consumes three sources only: the surface mesh nodes
-$(x,y,z,n_x,n_y,n_z)$, available directly from the CAD or mesh file;
-the flight condition $(M,\alpha,\Pi)$, taken from the test matrix or
-flight envelope; and two one-time training artefacts, namely the
-z-score statistics and the chord/span bounds fitted once on the
-training mesh.  Unlike the point-wise predecessor, however, AeroSurrogate
-consumes the surface \emph{as a whole}: the $k=8$ neighbour graph is
-rebuilt from the node coordinates alone (no mesh connectivity is
-required, so a bare point cloud suffices) and the five edge features
-follow from those coordinates and the surface normals.  The model
-therefore cannot score an isolated point or an arbitrary subset of the
-surface, which is a genuine deployment regression relative to the
-point-wise formulation.  Prediction proceeds in five steps:
-\begin{enumerate}
-  \item \emph{Analytical feature construction}: the five physics
-        features are evaluated from the closed-form isentropic
-        relations of Eqs.~(\ref{eq:derived1})--(\ref{eq:cpcrit}), and
-        the two geometry features $x_{\mathrm{norm}}$ and $\eta$ are
-        linear rescalings of the mesh coordinates using the stored
-        bounds, yielding $\mathbf{x}_i\in\mathbb{R}^{16}$ per node with
-        no solver call.
-  \item \emph{Graph construction}: a $k=8$ nearest-neighbour graph is
-        built over the node coordinates with a KD-tree (self-edges
-        excluded), giving $E=8N$ directed edges, each annotated with
-        $(\delta x,\delta y,\delta z,\|\boldsymbol{\delta}\|,
-        \mathbf{n}_i\!\cdot\!\mathbf{n}_j)$.  This costs approximately
-        1.5~s per 260\,774-node surface and is cached, so it is paid
-        once per geometry rather than once per flight condition.
-  \item \emph{Normalisation} of the node features $\mathbf{x}_i$ with
-        the stored training statistics.  The edge features are passed
-        to the edge encoder unnormalised, in physical units.
-  \item \emph{A single forward pass over the whole graph}, producing
-        $\hat{C}_p$ from the shock-gated mixture
-        (Eq.~(\ref{eq:forward_cp})) and
-        $[\hat{C}_{fx},\hat{C}_{fy},\hat{C}_{fz}]$ from the friction
-        head (Eq.~(\ref{eq:forward_cf})), together with the per-node
-        shock probability $p_{s,i}$ and the gate weights as
-        interpretable by-products.
-  \item \emph{Denormalisation} of
-        $[\hat{C}_p,\hat{C}_{fx},\hat{C}_{fy},\hat{C}_{fz}]$ to
-        physical units.
-\end{enumerate}
-The complete pipeline comprises feature construction, a graph build and
-one forward pass.  It requires no flow solver at any stage, against
-$\mathcal{O}(10^{3}$--$10^{4})$ CPU-hours for a RANS solution of a
-single flight condition, and only surface-level inputs that are
-equally available in experimental or flight-test contexts.  Its
-dominant cost is the eight rounds of message passing over the
-$2\,086\,192$ edges of the graph.  A like-for-like wall-clock timing
-against the solver and against the point-wise predecessor has not been
-carried out for the present model and is left to future work; the unit of work is now
-an entire surface rather than a batch of independent points, so the
-two are not directly comparable.
-
-% ================================================================
-\section{SYMBOLIC SHOCK CRITERIA: THE POINT-WISE MODEL AND THE
-  SPATIAL INDICATOR}
-\label{sec:sr}
-% ================================================================
-
-This section reports two symbolic results and keeps them apart
-throughout.  The first concerns the \emph{point-wise predecessor} of
-the model described above, the point-wise baseline quoted in
-Table~\ref{tab:results}.  It admits a closed-form shock criterion
-because its shock indicator reads a vector of sixteen named physical
-variables, nine of which are offered to the search
-(Sections~\ref{sec:srresults} and~\ref{sec:symgate}).  The
-second turns the same machinery on the spatial indicator of the
-present model, which reads the latent produced by the message-passing
-backbone.  There the nine variables are no longer the indicator's own
-inputs but a candidate basis in which to approximate its output, and
-Section~\ref{sec:srspatial} measures how far that approximation gets
-and what substituting it costs.
-
-Performed with PySR~\cite{Cranmer2020}, the search serves two
-purposes: (i)~\emph{interpretability} (a human-readable equation for
-the shock criterion) and (ii)~\emph{physical validation}, whether
-the criterion the RANS-derived labels encode is recoverable from a
-small set of named aerodynamic variables, and whether the resulting
-formula reproduces recognisable transonic behaviour.
-
-\subsection{Setup}
-
-The SR stage regresses the \emph{hard physics label}
-$y_{\mathrm{shock}}\in\{0,1\}$ of Eq.~(\ref{eq:labels}), not the
-soft output of the neural ShockIndicator, on a subset of nine
-physically meaningful features:
-\begin{equation}
-  \mathbf{x}_{\mathrm{sr}} = [\,M,\;\alpha,\;x_{\mathrm{norm}},\;
-  \eta,\; n_{z},\; C_{p}^{\mathrm{crit}},\; q_{\mathrm{dyn}},\;
-  \mathrm{AoA}_{\sin},\; L_{\mathrm{factor}}\,]
-  \label{eq:srfeatures}
-\end{equation}
-Raw geometric coordinates $(x,y,z)$ and the normal components
-$(n_x,n_y)$ are excluded to bias the search toward conditions based
-on flow physics and aerodynamically meaningful coordinates rather
-than absolute surface location, and the two total-pressure features
-$\Pi$ and $\Pi_{\mathrm{norm}}$ are withheld as well.  PySR performs a
-multi-objective evolutionary search (200 iterations, 20 populations of
-50 expressions, maximum complexity 20, 50\,000 training samples) over
-expression trees built from the operator set
-$\{+,\,-,\,\times,\,\div,\,\exp,\,\log,\,|\cdot|,\,\tanh\}$, minimising the MSE
-penalised by expression complexity (node count), and returns a Pareto
-front of candidate expressions.  A RandomForest classifier is trained
-in parallel on the same features to provide a model-agnostic feature
-importance ranking.
-
-\subsection{Results of the symbolic search}
-\label{sec:srresults}
-
-Figure~\ref{fig:importance} reports the RandomForest feature
-importances, measured on the same 50\,000-sample training set.  They
-rank $x_{\mathrm{norm}}$ ($0.2123$), $\eta$ ($0.1730$), $M$
-($0.1275$), $L_{\mathrm{factor}}$ ($0.1176$), $n_{z}$ ($0.0977$),
-$C_{p}^{\mathrm{crit}}$ ($0.0965$), $q_{\mathrm{dyn}}$ ($0.0889$),
-$\alpha$ ($0.0434$) and $\mathrm{AoA}_{\sin}$ ($0.0431$).  The two
-geometric coordinates rank first and second, but the ordering below
-them interleaves compressibility and geometry rather than separating
-them, and the freestream Mach number is only third.  The reading is
-physically plausible: on a transonic transport wing the shock sits at
-a characteristic chord fraction ($x/c \approx 0.3$--$0.6$) over the
-outer wing, and its occurrence is then modulated by the freestream
-Mach number.  The ranking is consistent with the inclusion of
-$x_{\mathrm{norm}}$ and $\eta$ in the 16-feature input vector,
-although it cannot be said to have motivated it: the classifier was
-trained on a feature set that already contained both, and the
-symbolic stage runs only after the surrogate has been trained.
-
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=0.75\textwidth]{figures/feature_importance.png}
-\caption{RandomForest feature importances over the nine point-wise
-  features, trained on the physics labels of Eq.~(\ref{eq:labels});
-  red bars mark the two variables that enter the selected symbolic
-  expression, Eq.~(\ref{eq:srdiscovered}).}
-\label{fig:importance}
-\end{figure}
-
-From the Pareto front (Figure~\ref{fig:pareto};
-Table~\ref{tab:pareto} lists the leading expressions), the
-complexity-5 expression with the highest score is selected:
-\begin{equation}
-  \hat{y}_{\mathrm{shock}}^{\mathrm{SR}}
-  = \tanh\!\left(\exp\!\left(
-      \frac{C_{p}^{\mathrm{crit}}(M)}{\eta}\right)\right)
-  \label{eq:srdiscovered}
-\end{equation}
-The two leading candidates are not, however, distinguishable as
-classifiers.  Complexity~5 differs from complexity~4 only by the
-outer $\tanh$, which is strictly monotone, so the two rank every
-point identically and share every threshold-free discrimination
-measure; the $0.0433$ against $0.0422$ gap is an artefact of
-evaluating the mean squared error after the output has been squashed
-toward $[0,1]$, not a gain in accuracy.  The $\tanh$ is retained
-because it bounds the output, not because it discriminates better.
-The front itself keeps descending beyond the selected point
-(Figure~\ref{fig:pareto}), so the choice of complexity~5 is one of
-legibility rather than of an elbow in the trade-off.
-
-Bounding is not by itself sufficient.  With
-$C_{p}^{\mathrm{crit}}(M)<0$ and $\eta\in(0,1]$,
-Eq.~(\ref{eq:srdiscovered}) is strictly positive and bounded above by
-$\tanh\!\left(\exp\!\left(C_{p}^{\mathrm{crit}}(M)\right)\right) <
-\tanh(1) \approx 0.762$, so it never spans the unit interval a
-routing probability requires.  What is used as the gate is therefore
-the expression composed with a monotone isotonic calibration fitted
-on the same labels, with $92$ knots and output range
-$[0.0155,\,1.0]$:
-\begin{equation}
-  p_{s}^{\mathrm{SR}} = \mathrm{Iso}_{92}\!\left(
-    \hat{y}_{\mathrm{shock}}^{\mathrm{SR}}\right)
-  \label{eq:srcalibrated}
-\end{equation}
-Being monotone, the calibration changes no ranking; it is a
-rescaling that makes the algebraic score usable as a probability, and
-it is part of what is deployed.
-
-\begin{table}[htbp]
-\centering
-\caption{Top of the PySR Pareto front over the nine point-wise
-  features (score balances mean-squared-error gain against complexity
-  increase; complexity = expression-tree node count).  The first two
-  rows are ranking-equivalent as classifiers; see text.}
-\label{tab:pareto}
-\begin{tabular}{clc}
-\toprule
-\textbf{Complexity} & \textbf{Expression} & \textbf{Score} \\
-\midrule
-5 & $\tanh(\exp(C_p^{\mathrm{crit}} / \eta))$ & \textbf{0.0433} \\
-4 & $\exp(C_p^{\mathrm{crit}} / \eta)$ & 0.0422 \\
-8 & $\exp(2\,C_p^{\mathrm{crit}} / (\eta + 0.1799))$ & 0.0331 \\
-6 & $\exp(C_p^{\mathrm{crit}} / \eta + C_p^{\mathrm{crit}})$ & 0.0293 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=0.72\textwidth]{figures/sr_pareto_front.png}
-\caption{PySR Pareto front over the nine point-wise features: MSE on
-  the shock labels versus expression complexity.  The selected
-  complexity-5 expression is starred.}
-\label{fig:pareto}
-\end{figure}
-
-The expression admits a direct physical reading, and also a clear
-limitation.  Since $C_{p}^{\mathrm{crit}}(M)<0$ (the sonic condition
-always corresponds to suction) and $\eta\in(0,1]$, the ratio
-$C_{p}^{\mathrm{crit}}/\eta$ is negative and increases monotonically
-with $\eta$; both $\exp$ and $\tanh$ are increasing, so
-$\hat{y}^{\mathrm{SR}}_{\mathrm{shock}}$ is a strictly monotone
-inboard-to-outboard ramp whose steepness is set by the Mach number.
-Near the root the large-magnitude negative argument drives
-$\exp(\cdot)\to 0$ and hence
-$\hat{y}^{\mathrm{SR}}_{\mathrm{shock}}\to 0$, which is the correct
-behaviour for a region kept unloaded by fuselage interference and
-thicker sections.  As the Mach number rises,
-$C_{p}^{\mathrm{crit}}$ becomes less negative, the ramp flattens and
-the predicted probability rises at every span station, the
-near-zero region retreating toward the root.  This is the inboard
-spreading of the supersonic pocket with Mach that is characteristic of
-swept transonic wings.  Figure~\ref{fig:symmap} maps the expression over
-the $(M,\eta)$ plane.
-
-The formula has no interior maximum: it is largest exactly at the tip,
-$\eta = 1$.  It therefore does not reproduce tip unloading by wash-out
-twist, and places its highest shock probability at the span station
-where the local lift coefficient of a swept, tapered transport wing is
-in fact lowest.  This is a genuine failure of the recovered criterion
-rather than a matter of interpretation, since the monotonicity in
-$\eta$ follows from the algebra.  It is the price of a two-variable
-expression: the criterion couples the second-ranked factor of the
-importance analysis, span-wise station, with the sixth-ranked one,
-proximity to the sonic threshold through $C_{p}^{\mathrm{crit}}$ (a
-function of Mach only), while omitting the first-ranked chord-wise
-coordinate entirely, so it has no means of expressing where the
-supersonic pocket terminates.  The quantity this paper can report for
-the sensor is accordingly not its standalone discrimination but the
-end-to-end cost of substituting it for the neural indicator, measured
-in Section~\ref{sec:symgate}.
-
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=0.65\textwidth]{figures/symbolic_sensor_map.png}
-\caption{Shock probability predicted by the point-wise symbolic
-  sensor of Eq.~(\ref{eq:srdiscovered}) over the Mach--span plane.}
-\label{fig:symmap}
-\end{figure}
-
-\subsection{Retraining the point-wise model with the frozen symbolic
-  gate}
-\label{sec:symgate}
-
-The expression was fitted to the physics label and not to the neural
-indicator, so its output is a different routing signal from the one
-the mixture was trained against; substituting it at inference alone
-would leave a mismatch between the routing statistics seen during
-training and at deployment.  The point-wise surrogate is therefore
-\emph{retrained} with $p_{s}^{\mathrm{SR}}$ of
-Eq.~(\ref{eq:srcalibrated}) frozen as the shock-probability source:
-the smooth experts, the shock expert and the gate adapt to the
-algebraic routing signal, and the BCE term is removed from the loss,
-there being nothing left for it to supervise.
-
-The substitution is not free.  On the point-wise model's own
-evaluation protocol (a 10\% random sample of its 156 test
-simulations, 4\,068\,074 points, the sample behind the point-wise column of
-Table~\ref{tab:results}), the retrained algebraic-gate model reaches
-$R^{2} = 0.9421$ for $C_p$ and $0.8202$, $0.7458$ and $0.8400$ for
-$C_{fx}$, $C_{fy}$ and $C_{fz}$, against $0.9506$, $0.8512$, $0.8463$
-and $0.8555$ for the neural gate.  The pressure field survives the
-substitution nearly intact, at a cost of $0.0085$; the lateral
-friction does not, losing $0.1005$.  Restricted to the shock subset
-the pattern is the same and slightly sharper: $0.8659$ against
-$0.8827$ for $C_p$, and $0.7111$ against $0.8292$ for $C_{fy}$.
-
-Two ablations on the same sample indicate how much of what survives
-is due to the retraining rather than to the expression.  Evaluating
-the retrained checkpoint with the shock probability held at a
-constant $0.41$, so that the gate receives no shock information at
-all, collapses global $R^{2}(C_{fy})$ to $0.5568$.  Conversely,
-driving the \emph{neural} checkpoint with the algebraic routing
-signal it was never trained against costs comparatively little
-globally ($R^{2}(C_{fy}) = 0.8414$) but drops $C_p$ on shock nodes to
-$0.7877$, below the $0.8659$ of the retrained model.  The learned
-routing therefore carries information the two physical variables do
-not supply, and retraining recovers only part of it.
-
-Two consequences follow for the model of Section~\ref{sec:method}.
-First, interpretability of the gate is bought here at a measurable
-price in accuracy, chiefly in the lateral friction component: the
-substitution is not lossless, and no equivalence between the two
-gates is claimed.  Second, the result belongs to the point-wise
-feature space.  The spatial indicator consumes the message-passing
-latent, which the nine named variables of Eq.~(\ref{eq:srfeatures})
-do not span, so this expression cannot be a distillation of it, and
-no algebraic gate is used anywhere in the reported model.  Whether an
-expression over those same nine variables can instead be fitted to
-the spatial indicator's own output is the question of
-Section~\ref{sec:srspatial}.
-
-\subsection{Distilling the spatial indicator into the same feature
-  space}
-\label{sec:srspatial}
-
-The point-wise expression was fitted to the physics label.  The
-spatial indicator cannot be treated that way, because what the
-reported model routes on is the indicator's own soft output $p_s$ and
-not the label; the object to be distilled is therefore $p_s$ itself.
-It was evaluated with the reported checkpoint over $15$ training
-simulations spanning the flight envelope, $300\,000$ nodes in all, of
-which $200\,000$ were given to the search and $100\,000$ held back for
-scoring.  The candidate
-basis is the same nine variables of Eq.~(\ref{eq:srfeatures}), each
-read at the node being predicted, so that any expression found is
-strictly local.  That is a deliberate choice, since it is exactly the
-locality that the message-passing indicator does not obey.  The
-budget is far larger than the point-wise one: $40$ populations of
-$100$ expressions over $500$ iterations, a maximum complexity of
-$30$, a different operator set,
-$\{+,\,-,\,\times,\,\div,\,\exp,\,\tanh,\,\sqrt{\cdot},\,(\cdot)^{2}\}$,
-and $196$ minutes of search.  Fitting the indicator's output rather
-than the label also removes the calibration step of
-Eq.~(\ref{eq:srcalibrated}): the expression already predicts a
-probability, and its mean over the held-out simulations, $0.2107$,
-matches the neural mean of $0.2069$, so it is used clipped to
-$[0,1]$ and otherwise unaltered.
-
-The search independently recovers the core of the point-wise
-criterion, and this is worth stating plainly.  Every entry on the
-Pareto front from complexity $6$ upward combines an exponential of
-$C_{p}^{\mathrm{crit}}$ with the span coordinate $\eta$, which sits
-inside that exponential in all but three of them; from
-complexity $14$ to the top of the front at $29$ (sixteen
-entries), the factor $\exp(C_{p}^{\mathrm{crit}}/\sqrt{\eta})$ is
-present in every one of them, literally in ten, as a factor of a
-single exponential in an eleventh, and in the remaining five with
-$\tanh\sqrt{\eta}$, a scaling constant, or $\eta$ perturbed by a
-chord-wise term in place of $\sqrt{\eta}$.  That is
-Eq.~(\ref{eq:srdiscovered}) up to the outer squashing and the
-exponent on $\eta$, reached against a different target (a network's
-soft output rather than the RANS label), for a different model
-(spatial rather than point-wise), with a different operator set and a
-much larger budget.  The coupling of proximity to the sonic condition
-with span-wise station is therefore not an artefact of how the first
-search was configured.  What the larger budget adds to that core are
-$\mathrm{AoA}_{\sin}$, $n_{z}$ and $x_{\mathrm{norm}}$ terms; the
-highest-fidelity expression, at complexity $29$, is
-\begin{equation}
-  \tilde{p}_{s}^{\mathrm{SR}} = M\,e^{C_{p}^{\mathrm{crit}}}
-  \left[
-    \exp\!\left(\frac{C_{p}^{\mathrm{crit}}}{\sqrt{\eta}}\right)
-    + \mathrm{AoA}_{\sin}\!\left(
-        n_{z} + \left|\mathrm{AoA}_{\sin} + n_{z}\right|
-        - \exp\tanh\!\left(\frac{\mathrm{AoA}_{\sin}}
-                                {0.4628 - x_{\mathrm{norm}}}\right)
-      \right)
-  \right]^{2}
-  \label{eq:srspatial}
-\end{equation}
-where the tilde distinguishes it from the point-wise gate of
-Eq.~(\ref{eq:srcalibrated}) and the absolute value is the search's
-own $\sqrt{(\cdot)^{2}}$.  Legibility has clearly been spent: the
-chord-wise coordinate absent from the point-wise criterion enters
-here, but through a term whose reading is no longer immediate.
-
-The fidelity is nonetheless low.  Eq.~(\ref{eq:srspatial}) reaches
-$R^{2} = 0.4095$ against $p_s$ on the $100\,000$ held-out nodes, and
-$0.3984$ was already available at complexity $21$, so the last third
-of the front buys almost nothing; against the hard label of
-Eq.~(\ref{eq:labels}) the same expression scores precision $0.7082$
-and recall $0.4510$.  A bare fidelity figure invites the objection
-that the search was misconfigured, so it is reported here against a
-ceiling.  Two deliberately over-powered models were fitted to the
-same targets, over the same nine features and the same
-$300\,000$-node sample split $225\,000/75\,000$: gradient boosting
-with $400$ trees reaches $R^{2} = 0.8717$ ($F_1 = 0.907$ against the
-hard label) and a $256$--$128$--$64$ MLP reaches $R^{2} = 0.8850$
-($F_1 = 0.894$).  The information the spatial indicator carries is
-thus very largely present in the nine local variables: an
-unconstrained function of them recovers $0.8850$ of its variance,
-while a $29$-node expression over the identical inputs
-recovers $0.4095$, a shortfall of $0.4755$ to the ceiling.  It is the
-closed form, not the locality of the features, that cannot hold the
-signal.  Budget does not explain the gap either: an earlier, much
-shorter search over the same targets stopped at $R^{2} = 0.3671$, and
-the long search improves on it by $0.042$ while the ceiling stays
-where it is.
-
-What a reader needs from a distillation is not its fidelity but what
-substituting it costs, and Table~\ref{tab:symspatial} reports that on
-the held-out partition of Table~\ref{tab:results}: $140$ simulations,
-$36\,508\,360$ points, with Eq.~(\ref{eq:srspatial}) driving both
-places $p_s$ enters the pressure path, namely the gate input and the
-scaling of the additive shock residual.  Globally the substitution
-costs $0.0116$ of $R^{2}(C_p)$.  On shock nodes it costs $0.1096$,
-and the mean absolute error there nearly doubles, from $0.0405$ to
-$0.0795$.  The friction columns of the table are a control rather
-than an omission: the friction head never reads $p_s$, so its three
-scores are unchanged to four decimals under the substitution, which
-is what establishes that the pressure deltas are attributable to the
-routing signal and to nothing else that moved.  At $0.8253$ on shock
-$C_p$ the algebraic gate falls below the collapsed-gate run of
-Table~\ref{tab:results} ($0.8814$) and below the point-wise
-predecessor on its own sample ($0.8827$): the substitution discards
-the whole of the shock-region gain the spatial architecture was built
-to obtain.
-
-\begin{table}[htbp]
-\centering
-\caption{Downstream cost of replacing the spatial ShockIndicator with
-  the distilled expression of Eq.~(\ref{eq:srspatial}), on the
-  held-out partition of Table~\ref{tab:results} (140 simulations,
-  36\,508\,360 points).}
-\label{tab:symspatial}
-\begin{tabular}{lrcccccc}
-\toprule
- & & \multicolumn{3}{c}{$R^{2}(C_p)$}
-   & \multicolumn{3}{c}{$R^{2}$ friction, either gate} \\
-\cmidrule(lr){3-5}\cmidrule(lr){6-8}
-\textbf{Subset} & \textbf{Points} & neural & symbolic & $\Delta$
-  & $C_{fx}$ & $C_{fy}$ & $C_{fz}$ \\
-\midrule
-global    & 36\,508\,360 & 0.9729 & 0.9613 & $-0.0116$
-  & 0.9172 & 0.9027 & 0.9209 \\
-shock     &  6\,830\,670 & 0.9350 & 0.8253 & $\mathbf{-0.1096}$
-  & 0.8923 & 0.8692 & 0.9076 \\
-transonic & 26\,077\,400 & 0.9842 & 0.9696 & $-0.0146$
-  & 0.9279 & 0.9167 & 0.9321 \\
-subsonic  & 10\,430\,960 & 0.9471 & 0.9438 & $-0.0033$
-  & 0.9005 & 0.8839 & 0.9086 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Set against the point-wise result of Section~\ref{sec:symgate}, this
-is the finding of the section.  There, replacing the neural gate with
-a closed form cost $0.0168$ of shock-subset $R^{2}(C_p)$
-($0.8827 \to 0.8659$); here the same substitution costs $0.1096$
-($0.9350 \to 0.8253$), $6.5\times$ as much, although the expression
-is six times the size of the point-wise one and was found with a much
-larger budget.  Interpretability of the gate grows more expensive as
-the indicator grows richer: a shock probability assembled from a
-neighbourhood is not, in any form that stays legible, a function of
-the node's own named variables, and the ceiling locates the
-obstruction in the algebraic hypothesis class rather than in the
-features.  The reported model accordingly uses the neural indicator
-throughout, and the closed-form criteria of this section are offered
-as an analysis of what the gate has learned, not as a component of
-it.
+At inference no solver output is required: the model consumes the
+surface nodes and the flight condition, from which every feature
+follows analytically, and returns the four coefficients in one forward
+pass with $p_{s,i}$ as an interpretable by-product.  It consumes the
+surface \emph{as a whole}, however, and so cannot score an isolated
+point, a deployment regression relative to the point-wise
+formulation.
 
 % ================================================================
 \section{RESULTS AND DISCUSSION}
@@ -1563,263 +470,140 @@ it.
 \subsection{Aerodynamic coefficient prediction}
 
 Table~\ref{tab:results} reports the coefficient-of-determination
-scores on the held-out test set: 140 simulations and 36\,508\,360
-surface points, disjoint from both the training partition and the
-sixteen simulations on which early stopping selected the checkpoint.
-The reported model attains $R^{2}=0.9729$ for the pressure coefficient
-and $R^{2}$ between $0.9027$ and $0.9209$ for the three skin-friction
-components; restricted to the shock subset the corresponding figures
-are $0.9350$ and $0.8692$--$0.9076$.  Table~\ref{tab:mae} states the
-same result as mean absolute errors in physical units, and adds the
+scores over the 140 held-out simulations and 36\,508\,360 surface
+points.  In physical units the mean absolute error on $C_p$ is
+$0.0276$ globally and $0.0405$ on the shock subset, and the
 confidence-weighted $R^{2}$ in which form the reference results for
-this database are reported.  In Table~\ref{tab:results},
+this database are reported is $0.9768$ for $C_p$.  In the table,
+\emph{nearest cond.} is the no-learning baseline described below,
 \emph{collapsed gate} is the run trained before the load-balancing
 sign correction, \emph{from scratch} is joint end-to-end training with
 the corrected loss, and \emph{two-stage} is the reported model:
-end-to-end pre-training followed by a head-only fine-tune with the
-backbone frozen.
-
-The gap between pressure and friction accuracy deserves a physical
-reading, since it is structural rather than incidental.  The surface
-pressure is imposed predominantly by the outer, essentially inviscid
-flow; it is therefore a direct and largely local function of the
-geometry and flight condition that constitute the input vector.  The
-skin friction, in contrast, is a wall-gradient quantity, proportional
-to the wall-normal velocity gradient at the base of the boundary
-layer: its magnitude is two to three orders smaller than the pressure
-loading, and its local value encodes the upstream history of the
-boundary layer.  That history comprises transition (fixed at 10\%
-chord in the database), pressure-gradient history and incipient
-separation, and it is non-local information.  The spatial backbone is
-precisely the mechanism that narrows this gap, and the effect is
-visible in Table~\ref{tab:results}: against the point-wise formulation
-the three friction components gain between $0.056$ and $0.066$ in global
-$R^{2}$, compared with $0.022$ for $C_p$.  A residual gap nevertheless
-survives, because eight rounds of message passing over a $k{=}8$
-neighbour graph propagate information over a bounded number of hops,
-whereas boundary-layer history is integrated along a streamline from
-the attachment line onward.  That path is neither short in graph
-distance nor aligned with the isotropic neighbourhoods the graph
-provides.  The lateral component $C_{fy}$ is further penalised because
-it is the projection of the shear-stress vector that changes sign with
-local surface orientation and cross-flow direction, so its
-distribution is centred near zero over large portions of the airframe
-and the $R^{2}$ statistic becomes intrinsically more demanding.
-Consistently with that reading, $C_{fy}$ is the weakest of the three
-friction components in both models, while $C_{fz}$, despite being a
-sign-changing projection as well, is marginally the strongest.
-Finally, the RANS friction fields are
-themselves the least reliable solver output at the extreme
-incidences included in the envelope, where convergence
-degrades~\cite{Peter2025}, so part of the residual is label noise
-rather than model error.  The ranking observed here ($C_p$ best,
-then the friction components) matches the reference results for
-this database, where every regressor evaluated by
-ONERA exhibits the same ordering, with friction $R^{2}$ scores
-systematically below the pressure score and worst-case relative
-errors on $C_{fy}$ and $C_{fz}$ up to twice those of
-$C_p$~\cite{Peter2025}.
+end-to-end pre-training then a head-only fine-tune with the backbone
+frozen.
 
 \begin{table}[htbp]
 \centering
 \caption{Coefficient of determination on the held-out test set: 140
   simulations (36\,508\,360 surface points) disjoint from both
   training and model selection.  Columns are defined in the text; the
-  point-wise one is measured on a different protocol.}
+  two-stage column is the reported model and the point-wise one is
+  measured on a different protocol.}
 \label{tab:results}
-\begin{tabular}{llcccc}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llccccc}
 \toprule
-\textbf{Subset} & \textbf{Coef.} & \textbf{point-wise} & \textbf{collapsed gate}
+\textbf{Subset} & \textbf{Coef.} & \textbf{nearest cond.}
+  & \textbf{point-wise} & \textbf{collapsed gate}
   & \textbf{from scratch} & \textbf{two-stage} \\
 \midrule
-global    & $R^{2}(C_p)$    & 0.9506 & 0.9549 & 0.9580 & \textbf{0.9729} \\
-          & $R^{2}(C_{fx})$ & 0.8512 & 0.8665 & 0.8775 & \textbf{0.9172} \\
-          & $R^{2}(C_{fy})$ & 0.8463 & 0.8443 & 0.8509 & \textbf{0.9027} \\
-          & $R^{2}(C_{fz})$ & 0.8555 & 0.8796 & 0.8806 & \textbf{0.9209} \\
+global    & $R^{2}(C_p)$    & 0.9159 & 0.9506 & 0.9549 & 0.9580 & \textbf{0.9729} \\
+          & $R^{2}(C_{fx})$ & 0.8729 & 0.8512 & 0.8665 & 0.8775 & \textbf{0.9172} \\
+          & $R^{2}(C_{fy})$ & 0.8823 & 0.8463 & 0.8443 & 0.8509 & \textbf{0.9027} \\
+          & $R^{2}(C_{fz})$ & 0.8629 & 0.8555 & 0.8796 & 0.8806 & \textbf{0.9209} \\
 \midrule
-shock     & $R^{2}(C_p)$    & 0.8827 & 0.8814 & 0.8956 & \textbf{0.9350} \\
-          & $R^{2}(C_{fx})$ & 0.8390 & 0.8231 & 0.8445 & \textbf{0.8923} \\
-          & $R^{2}(C_{fy})$ & 0.8292 & 0.7867 & 0.8063 & \textbf{0.8692} \\
-          & $R^{2}(C_{fz})$ & 0.8643 & 0.8592 & 0.8677 & \textbf{0.9076} \\
+shock     & $R^{2}(C_p)$    & 0.7779 & 0.8827 & 0.8814 & 0.8956 & \textbf{0.9350} \\
+          & $R^{2}(C_{fx})$ & 0.8524 & 0.8390 & 0.8231 & 0.8445 & \textbf{0.8923} \\
+          & $R^{2}(C_{fy})$ & 0.8843 & 0.8292 & 0.7867 & 0.8063 & \textbf{0.8692} \\
+          & $R^{2}(C_{fz})$ & 0.9047 & 0.8643 & 0.8592 & 0.8677 & \textbf{0.9076} \\
 \midrule
-transonic & $R^{2}(C_p)$    & 0.9629 & 0.9669 & 0.9698 & \textbf{0.9842} \\
-subsonic  & $R^{2}(C_p)$    & 0.9236 & 0.9259 & 0.9303 & \textbf{0.9471} \\
+transonic & $R^{2}(C_p)$    & 0.9600 & 0.9629 & 0.9669 & 0.9698 & \textbf{0.9842} \\
+subsonic  & $R^{2}(C_p)$    & 0.8078 & 0.9236 & 0.9259 & 0.9303 & \textbf{0.9471} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\begin{table}[htbp]
-\centering
-\caption{Reported model on the held-out test set: mean absolute error
-  in physical units, together with the confidence-weighted $R^{2}$ of
-  the ONERA regression challenge.}
-\label{tab:mae}
-\begin{tabular}{lrcccc}
-\toprule
-\textbf{Subset} & \textbf{Points} & MAE($C_p$) & MAE($C_{fx}$)
-  & MAE($C_{fy}$) & MAE($C_{fz}$) \\
-\midrule
-global    & 36\,508\,360 & 0.0276 & $2.26{\times}10^{-4}$
-  & $1.64{\times}10^{-4}$ & $1.48{\times}10^{-4}$ \\
-shock     &  6\,830\,670 & 0.0405 & $3.99{\times}10^{-4}$
-  & $2.76{\times}10^{-4}$ & $2.49{\times}10^{-4}$ \\
-transonic & 26\,077\,400 & 0.0250 & $2.15{\times}10^{-4}$
-  & $1.57{\times}10^{-4}$ & $1.36{\times}10^{-4}$ \\
-subsonic  & 10\,430\,960 & 0.0415 & $3.02{\times}10^{-4}$
-  & $2.35{\times}10^{-4}$ & $2.26{\times}10^{-4}$ \\
-\midrule
-\multicolumn{6}{l}{Confidence-weighted $R^{2}$: $C_p$ 0.9768,
-  $C_{fx}$ 0.9218, $C_{fy}$ 0.9097, $C_{fz}$ 0.9243} \\
-\bottomrule
-\end{tabular}
-\end{table}
+The nearest-training-condition baseline performs no learning at all:
+for each held-out simulation it copies the surface field of the
+training condition closest to it in the normalised
+$(M_{\infty}, \alpha, \Pi)$ space.  The median normalised distance to
+that neighbour is $0.0333$ and the maximum $0.1000$, so the sampling
+is dense enough for the baseline to be demanding rather than a straw
+man; it reaches $R^{2}(C_p) = 0.9159$ globally, which places most of
+the aggregate score within reach of interpolation between neighbouring
+conditions.  Where it fails is where the architecture is aimed:
+$0.7779$ on the shock subset against $0.9350$, and $0.8078$ on the
+subsonic subset against $0.9471$.  A neighbouring condition puts the
+shock almost in the right position, and is penalised on both sides of
+the offset.
 
-The three present-model columns of Table~\ref{tab:results} separate two
+The gap between pressure and friction accuracy is structural: surface
+pressure is set by the outer, essentially inviscid flow and is a
+largely local function of the input vector, whereas skin friction is a
+wall-gradient quantity, two to three orders smaller, encoding the
+upstream history of the boundary layer, non-local information that
+eight rounds of message passing over an isotropic $k{=}8$ graph
+propagate only in part.  Every regressor evaluated on this database
+shows the same ordering~\cite{Peter2025}.
+
+The three trained columns of Table~\ref{tab:results} separate two
 independent corrections, and they are not the same size.  The
 load-balance term was an entropy that had been added to, rather than
 subtracted from, the minimised objective, and it therefore drove the
-gate toward the collapse it was meant to prevent.  Holding the
-training schedule fixed, repairing its sign moves global $R^{2}(C_p)$
-from $0.9549$ to $0.9580$ and the shock-subset score from $0.8814$ to
+gate toward the collapse it was meant to prevent; repairing its sign,
+with the training schedule held fixed, moves global $R^{2}(C_p)$ from
+$0.9549$ to $0.9580$ and the shock-subset score from $0.8814$ to
 $0.8956$.  Adding the two-stage schedule on top of the corrected loss
-is worth substantially more: $0.9580$ to $0.9729$ globally and
-$0.8956$ to $0.9350$ on shock nodes.  Table~\ref{tab:ablation}
-collects the two deltas.  Inside the shock region, the regime the
-architecture exists to serve, the curriculum is worth about
-$2.8\times$ what the sign correction bought.  It is also worth noting
-that the collapsed-gate run reaches only $0.8814$ on shock $C_p$, no
-better than the $0.8827$ of the point-wise predecessor on its own
-sample: the mixture pays for itself only once the gate is balanced.
-Figure~\ref{fig:training} shows the corrected term at work over the
-reported run, together with the validation curve on which the
-checkpoint was selected.  The entropy of the batch-averaged gate
-climbs from $0.50$ to $1.38$ within the first few epochs and holds
-there, just short of its ceiling $\log K = 1.386$.  The best
-checkpoint is written at epoch 118 and the run stops on patience at
-epoch 134;
-those validation scores are the selection criterion and not the
-reported accuracy, which Table~\ref{tab:results} measures on the 140
-simulations excluded from selection.
+is worth substantially more, $0.9580$ to $0.9729$ globally and
+$0.8956$ to $0.9350$ on shock nodes, about $2.8\times$ the sign
+correction inside the shock region.  The collapsed-gate run reaches
+only $0.8814$ on shock $C_p$, no better than the $0.8827$ of the
+point-wise predecessor on its own sample: the mixture pays for itself
+only once the gate is balanced.
 
-\begin{table}[htbp]
-\centering
-\caption{What each correction contributes, isolated on the held-out
-  test set, and the inference-time ablation of the shock residual on
-  shock nodes.}
-\label{tab:ablation}
-\begin{tabular}{lcc}
-\toprule
-\textbf{Change} & $\Delta R^{2}(C_p)$ global & $\Delta R^{2}(C_p)$ shock \\
-\midrule
-Load-balance sign fix (collapsed $\to$ from scratch) & $+0.0031$ & $+0.0142$ \\
-Two-stage schedule (from scratch $\to$ two-stage)    & $+0.0149$ & $+0.0394$ \\
-\midrule
-\multicolumn{3}{l}{\emph{Inference-time ablation of
-  $p_s\,f^{\mathrm{shock}}(\mathbf{h}_i)$ on shock nodes}}\\
-MAE($C_p$) with residual    & \multicolumn{2}{c}{0.0458} \\
-MAE($C_p$) without residual & \multicolumn{2}{c}{0.1370} \\
-\bottomrule
-\end{tabular}
-\end{table}
+Suppressing the additive shock residual $p_s\,f^{\mathrm{shock}}(\mathbf{h}_i)$
+at inference, with every weight otherwise unchanged, raises the $C_p$ mean
+absolute error on the shock nodes of eight held-out test simulations from
+$0.0458$ to $0.1370$: the residual removes $66.6\%$ of the error the smooth
+mixture alone would incur there, and on those same nodes it carries $43.4\%$
+of the magnitude of the smooth output.  That is the discontinuity mechanism
+measured directly rather than inferred from the aggregate scores.  The schedule
+comparison, by contrast, rests on a single run per arm, matched in data,
+loss and setup and both stopped on patience, so it cannot separate a
+curriculum effect from a fortunate initialisation.
 
-Two further measurements bear on the mechanism rather than on the
-schedule.  Suppressing the additive shock residual
-$p_s\,f^{\mathrm{shock}}(\mathbf{h}_i)$ at inference, with every
-weight otherwise unchanged, raises the $C_p$ mean absolute error on
-the shock nodes of eight held-out test simulations (the ablation rows
-of Table~\ref{tab:ablation}) from $0.0458$ to $0.1370$: the residual
-removes $66.6\%$ of the error the smooth mixture alone would incur
-there, and on those same nodes it carries $43.4\%$ of the magnitude of
-the smooth output.
-This is the explicit discontinuity mechanism being measured directly,
-rather than inferred from the aggregate scores.  Against that, the
-schedule comparison rests on a single run per arm.  The two arms are
-otherwise matched: same data, same loss, same single-process
-setup, both stopped on patience rather than at the epoch cap.  Even
-so, one run each cannot separate a genuine curriculum effect from a
-fortunate initialisation, and repeated seeds are what would settle it.
+The model scores better in the transonic regime than in the subsonic
+one ($R^{2}(C_p) = 0.9842$ against $0.9471$), which follows from the
+objective: the shock label requires $M_{\infty} > 0.75$, so the
+six-fold weight $w_i$ can never reach a subsonic node, and just over a
+quarter of the held-out transonic points carry the label
+(6\,830\,670 of 26\,077\,400).
 
-The subset breakdown of Tables~\ref{tab:results} and \ref{tab:mae}
-shows the model performing better in the transonic regime than in the
-subsonic one ($R^{2}(C_p) = 0.9842$ against $0.9471$, and a mean
-absolute error of $0.0250$ against $0.0415$), which inverts the naive
-expectation that shocked flows are the harder problem.  Part of the
-$R^{2}$ gap is a variance artefact: the transonic subset carries the
-strong suction peaks and the compression jumps, so the denominator of
-$R^{2}$ is larger there.  The mean absolute error has no such
-denominator and shows the same ordering, however, so the effect is not
-purely statistical.  The mechanism is the objective itself.  The shock
-label conjoins $C_p^{\mathrm{RANS}} < C_p^{\mathrm{crit}}(M)$ with
-$M_{\infty} > 0.75$, and the per-node weight is
-$w_i = 1 + \lambda_{\mathrm{sw}}\,y_{\mathrm{shock},i}$ with
-$\lambda_{\mathrm{sw}} = 5$, so a shock node is weighted six times a
-plain one and \emph{no} subsonic node can ever receive that weight.
-Just over a quarter of the held-out transonic points carry the label
-(6\,830\,670 of 26\,077\,400), so the optimiser spends a
-disproportionate share of its budget in the transonic regime by
-construction.  The regime the architecture targets is therefore also
-the regime the loss rewards, and the subsonic scores are best read as
-the price of that choice rather than as a failure of the model.
+\subsection{How far the shock criterion compresses}
+\label{sec:symbolic}
 
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=0.78\textwidth]{figures/v2_training_curve.png}
-\caption{Training history of the reported model (the head-only
-  fine-tune, with the backbone frozen).  Top: training loss and its
-  $C_p$ and friction components, logarithmic axis.  Middle: the
-  load-balance term, with its ceiling $\log K = 1.386$ dashed.
-  Bottom: $R^{2}$ on the sixteen validation simulations.}
-\label{fig:training}
-\end{figure}
+Because the indicator is supervised on a physical label, it is fair to
+ask whether it can be written down.  For the point-wise predecessor of
+this model, whose indicator read the nine interpretable node variables
+directly, symbolic regression recovers the five-node expression
+$p_s = \tanh(\exp(C_p^{\mathrm{crit}}(M)/\eta))$, $\eta$ the normalised
+span station, which activates with Mach and towards the tip.
+Substituting it there costs $0.0085$ in $R^{2}(C_p)$ but $0.1005$ in
+$R^{2}(C_{fy})$: the pressure criterion survives compression, the
+lateral friction does not.
 
-Figure~\ref{fig:parity} shows parity plots for the four coefficients,
-in physical units, over the six held-out flight conditions examined in
-the next subsection.  The $C_p$ cloud is tight around the identity
-line across its full range, including the strong-suction tail
-generated by the shock-side suction peaks; the friction components
-show the wider but unbiased scatter consistent with their lower
-$R^{2}$.  The six conditions comprise 1\,564\,644 nodes, of which
-200\,000 are drawn in each scatter while the printed per-panel
-statistics use every node.  Those statistics characterise these six
-conditions only and are therefore a different quantity from the
-140-simulation held-out scores of Table~\ref{tab:results}.
-
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=0.95\textwidth]{figures/v2_parity_plots.png}
-\caption{Parity plots (AeroSurrogate vs.\ RANS, physical units) for
-  $C_p$, $C_{fx}$, $C_{fy}$ and $C_{fz}$, pooled over the six held-out
-  flight conditions of Figures~\ref{fig:fields_cp} and
-  \ref{fig:fields_cf}.  The dashed red line is the identity.}
-\label{fig:parity}
-\end{figure}
+Against the spatial indicator the same search does not close.  It
+recovers the same $\exp(C_p^{\mathrm{crit}}/\sqrt{\eta})$ core, which
+corroborates the earlier expression independently, yet a $29$-node
+expression reaches only $R^{2}=0.4095$ against the indicator's own
+output where an unconstrained regressor on the identical variables
+reaches $0.8850$.  The information is local; the closed form is what
+cannot hold it.  Once the indicator sees an eight-hop neighbourhood
+its criterion stops being compactly expressible, which is the same
+richness that lifts the shock-subset score.
 
 \subsection{Full-aircraft surface fields}
 
 Figures~\ref{fig:fields_cp} and \ref{fig:fields_cf} compare the RANS
-reference fields, the AeroSurrogate prediction, and the signed
-error (CFD $-$ model) for the pressure coefficient and for the
-skin-friction magnitude
-$\lvert\mathbf{C}_f\rvert=\lVert(C_{fx},C_{fy},C_{fz})\rVert_{2}$, on
-both the lower and upper aircraft surfaces, for six held-out flight
-conditions spanning the envelope:
-subsonic at negative incidence ($M{=}0.30$, $\alpha{=}-6^{\circ}$),
-high-subsonic at strong negative incidence
-($M{=}0.70$, $\alpha{=}-7.5^{\circ}$), transonic cruise
-($M{=}0.80$, $\alpha{=}0^{\circ}$), transonic at moderate incidence
-($M{=}0.84$, $\alpha{=}5^{\circ}$), high-transonic
-($M{=}0.86$, $\alpha{=}0^{\circ}$), and a high-Mach, high-incidence
-condition ($M{=}0.90$, $\alpha{=}6^{\circ}$).  None of the six took
-any part in model selection.  In both figures one row is one flight
-condition and the three columns are, from left to right, the CFD
-truth, the AeroSurrogate prediction and the signed error; all six
-rows share a single field scale and a single error scale, so panels
-may be compared across conditions.  Figure~\ref{fig:fields_sim147}
-then shows the most demanding of the six on its own, with the layout
-transposed (rows are CFD, model and error; columns are $C_p$ and
-$\lvert\mathbf{C}_f\rvert$) and with its own colour bars: a field
-scale shared between the CFD and model rows, and an error scale
-symmetric about zero.
+reference, the AeroSurrogate prediction and the signed error
+(CFD $-$ model) for $C_p$ and for the skin-friction magnitude
+$\lvert\mathbf{C}_f\rvert$, over both aircraft surfaces, for six
+held-out flight conditions spanning the envelope from $M{=}0.30$,
+$\alpha{=}-6^{\circ}$ to $M{=}0.90$, $\alpha{=}6^{\circ}$, none of
+which took any part in model selection.  All six rows share a single
+field scale and a single error scale, so panels may be compared across
+conditions; Figure~\ref{fig:fields_sim147} shows the most demanding of
+the six on its own.
 
 \begin{figure}[p]
 \centering
@@ -1844,213 +628,63 @@ symmetric about zero.
 \end{figure}
 
 The predicted fields reproduce the characteristic structure of each
-regime.  In the subsonic case (top row) the smooth pressure
-distribution and the loading redistribution toward the lower surface
-induced by the negative incidence are captured without spurious
-oscillations; the same inverted loading, stronger, appears in the
-second row at $M{=}0.70$, $\alpha{=}-7.5^{\circ}$, where the
-lower-surface suction and the leading-edge pressure peaks are
-correctly reproduced.  From the third row onward the flow is
-transonic: the upper-wing supersonic plateau appears at the correct
-chord-wise and span-wise station, and as Mach and incidence increase
-down the figure it strengthens, extends outboard and moves aft.  The
-fraction of nodes carrying a positive shock label, printed in each row
-label, rises from $0.0\%$ in the two subsonic rows through $4.6\%$,
-$15.2\%$ and $18.6\%$ to $29.3\%$ in the bottom row; the surrogate
-tracks the displacement throughout, including the intensified suction
-of the $M{=}0.90$, $\alpha{=}6^{\circ}$ case, which
-Figure~\ref{fig:fields_sim147} shows at full resolution.  The
-associated skin-friction signature, the marked drop of
-$\lvert\mathbf{C}_f\rvert$ over the supersonic upper-surface
-region, is recovered in Figure~\ref{fig:fields_cf}.  Because the
-friction head predicts a magnitude and a unit direction separately
-(Section~\ref{sec:friction}), $\lvert\mathbf{C}_f\rvert$ is a quantity
-the model produces directly.
+regime.  The two subsonic rows show the loading redistribution toward
+the lower surface induced by the negative incidence, without spurious
+oscillations; from the third row onward the upper-wing supersonic
+plateau appears at the correct chord-wise and span-wise station and,
+as Mach and incidence increase down the figure, strengthens, extends
+outboard and moves aft, together with the marked drop of
+$\lvert\mathbf{C}_f\rvert$ over the same region in
+Figure~\ref{fig:fields_cf}.  The shock-labelled node fraction rises
+from $0.0\%$ in the two subsonic rows to $29.3\%$ in the bottom one,
+and the surrogate tracks the displacement throughout.
 
 The error maps are signed rather than relative, since an error
 normalised by the local coefficient saturates wherever that
-coefficient crosses zero and is therefore unreadable over most of the
-fuselage.  The scale is
-symmetric about zero and shared across all six rows, so white is
-exactly zero error and red and blue distinguish under- from
-over-prediction.  Two features stand out.  First, the error is not
-largest where the shocks are: the two visibly worst rows of
-Figures~\ref{fig:fields_cp} and \ref{fig:fields_cf} are the two
-lowest-Mach conditions, neither of which carries a single
-shock-labelled node, while the four transonic rows are close to white
-over most of the wetted surface.  That is the same ordering the
-subset scores of Tables~\ref{tab:results} and \ref{tab:mae} report.
-Second, within each row the residual error concentrates in a small
-number of places: the wing--body junction, the inboard wing, and thin
-bands along the leading and trailing edges.  All of them are locations
-where the surface field varies over a length scale comparable to the
-node spacing, and therefore over few graph hops.  Over the outer wing,
-including the supersonic plateau itself, the error is close to zero.
-The friction maps of Figure~\ref{fig:fields_cf} follow the same
-spatial pattern on a scale two orders of magnitude smaller, consistent
-with the mean absolute errors of Table~\ref{tab:mae} and with the
-parity plots of Figure~\ref{fig:parity}.
-
+coefficient crosses zero.  The error is not largest where the shocks
+are: the two visibly worst rows are the two lowest-Mach conditions,
+neither of which carries a shock-labelled node.  Within each row it
+concentrates at the wing--body junction, the inboard wing and thin
+bands along the leading and trailing edges, where the surface field
+varies over a length scale comparable to the node spacing and
+therefore over few graph hops; over the outer wing, including the
+supersonic plateau itself, it is close to zero.
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=0.98\textwidth]{figures/v2_surface_fields_sim147_wide.png}
+\includegraphics[width=0.78\textwidth]{figures/v2_surface_fields_sim147_wide.png}
 \caption{The most demanding condition of the six at full resolution
   ($M_{\infty}{=}0.90$, $\alpha{=}6^{\circ}$, $\Pi{=}4{\times}10^{5}$,
-  test simulation 147; $29.3\%$ of its nodes carry a positive shock
-  label).  Each panel places the lower surface left of the upper
-  surface.}
+  test simulation 147; $29.3\%$ of its nodes are shock-labelled).
+  Each panel places the lower surface left of the upper surface.}
 \label{fig:fields_sim147}
 \end{figure}
 
-\subsection{Discussion}
-
-Three aspects of the results merit emphasis.  First, the accuracy is
-obtained over a wide multi-regime envelope (Mach 0.30--0.96, angle of
-attack from $-15^{\circ}$ to $+12.5^{\circ}$ on the held-out
-partition) by a single model, without per-condition retraining or
-condition-specific calibration, and it is obtained \emph{spatially}.
-Replacing the point-wise input vector of the predecessor with an
-eight-layer message-passing backbone over the surface graph, at the
-cost of growing the model from $3\times 10^{5}$ to 4\,603\,918
-parameters, is what produces the gain: $R^{2}(C_p)$ rises from
-$0.9506$ to $0.9729$ and $R^{2}(C_{fy})$, the weakest of the four
-coefficients, from $0.8463$ to $0.9027$.  The price is a deployment
-restriction rather than an accuracy one: the model consumes an
-entire surface at once and can no longer score an isolated point.
-
-Second, the two mechanisms that address the smoothing pathology are
-now measured rather than asserted (Table~\ref{tab:ablation}).
-Removing the additive shock residual at inference, with every weight
-otherwise unchanged, leaves the $C_p$ mean absolute error on shock
-nodes three times larger; the explicit discontinuity mechanism
-therefore accounts for two thirds of the error the smooth mixture
-alone would incur there.  The shock-weighted loss is visible in the
-subset breakdown as well, and in a direction worth stating plainly:
-because only transonic points can carry the shock label, the objective
-concentrates its attention where the design targets it, and the
-subsonic scores are correspondingly the weaker ones.
-
-Third, the ordering of the two corrections is itself a result.  A sign
-error in the load-balance term (an entropy added to, rather than
-subtracted from, a minimised objective) collapsed the gate onto a
-single expert in the first run; correcting it recovered a healthy
-mixture and $+0.0142$ of shock-subset $R^{2}(C_p)$.  Maturing the
-backbone first and specialising the heads afterwards, with the
-backbone frozen, was worth $+0.0394$ on the same subset, roughly
-$2.8\times$ as much.  That comparison rests on a single run per arm,
-so it is reported here as a well-supported observation rather than as
-an established effect.
 
 % ================================================================
 \section{CONCLUSIONS}
 \label{sec:conclusions}
 % ================================================================
 
-A physics-aware surrogate for transonic aerodynamic surface
-prediction has been presented, coupling a spatial graph backbone over
-the surface mesh to a shock-gated Mixture of Experts head, and
-evaluated on 36\,508\,360 held-out RANS surface points of the ONERA
-CRM WBPN configuration.  Because the sixteen simulations on which
-early stopping selects the checkpoint are themselves drawn from the
-test partition, every score quoted here is measured on the remaining
-140 simulations, which took no part in model selection.  Six
-conclusions are drawn:
+A physics-aware surrogate for transonic aerodynamic surfaces has been
+presented, coupling a spatial graph backbone over the surface mesh to a
+shock-gated Mixture of Experts head for $C_p$ and a dedicated friction
+head.  On the 140 held-out simulations, 36\,508\,360 surface points, it
+reaches $R^{2}(C_p)=0.9729$ globally and $0.9350$ on shock nodes.  That
+margin is not an artefact of a densely sampled envelope: a
+nearest-training-condition baseline reaches $0.9159$ globally but only
+$0.7779$ on shock nodes, so the architecture earns its place where the
+physics is hard.  Deleting the shock residual raises the shock-node
+$C_p$ mean absolute error from $0.0458$ to $0.1370$; correcting the
+load-balancing sign is worth $+0.0142$ on the shock subset, and
+maturing the backbone before fine-tuning the head a further $+0.0394$.
+Labels read off the RANS pressures keep inference solver-free and are
+still recovered with precision $0.8964$ and recall $0.9927$.
 
-\begin{itemize}
-  \item Reading the surface as a mesh rather than as a bag of
-        independent points is what buys the accuracy.  A backbone of
-        eight message-passing layers over a $k$-nearest-neighbour
-        graph of the surface nodes, with 4\,603\,918 parameters in
-        total, reaches $R^{2}=0.9729$ ($C_p$), $0.9172$ ($C_{fx}$),
-        $0.9027$ ($C_{fy}$) and $0.9209$ ($C_{fz}$) globally, and
-        $0.9350$, $0.8923$, $0.8692$ and $0.9076$ on the shock
-        subset, across Mach $0.30$--$0.96$ and angles of attack from
-        $-15^{\circ}$ to $+12.5^{\circ}$ on the held-out partition
-        (Table~\ref{tab:results}).
-  \item The shock-gated residual expert remains the explicit
-        architectural mechanism for the pressure discontinuity, and
-        its contribution is measured rather than asserted: removing
-        $p_s\,f^{\mathrm{shock}}(\mathbf{h}_i)$ at inference raises
-        the $C_p$ mean absolute error on shock nodes from $0.0458$ to
-        $0.1370$, so the residual removes $66.6\%$ of the error the
-        model would otherwise incur there.  Routing is conditioned on
-        the node latent concatenated with its shock probability,
-        $[\mathbf{h}_i \,\|\, p_s]$, and not on the freestream Mach
-        number.
-  \item Two implementation-level corrections separate the reported
-        model from an otherwise identical one, and they are not the
-        same size.  The load-balancing term was an entropy that had
-        been added to, rather than subtracted from, a minimised loss,
-        so that it drove the gate onto a single expert.  Correcting
-        its sign is worth $+0.0031$ global and
-        $+0.0142$ shock $R^{2}(C_p)$ with the training schedule held
-        fixed.  Maturing the backbone first and fine-tuning the head
-        afterwards with the backbone frozen is worth a further
-        $+0.0149$ and $+0.0394$, i.e.\ about $2.8\times$ as much
-        inside the shock region, which is the region the architecture
-        exists to serve.  This comparison rests on one run per arm,
-        so seed variance cannot be excluded.
-  \item Training labels derived from real RANS surface pressures via
-        the critical-pressure criterion in conjunction with a
-        transonic threshold, $C_p < C_p^{\mathrm{crit}}(M)$ and
-        $M > 0.75$ (rather than isentropic pseudo-labels computed
-        from the inputs), give the shock probability a genuine
-        physical meaning while keeping the inference path entirely
-        solver-free.  The spatial indicator recovers that label with
-        precision $0.8964$ and recall $0.9927$ over eight held-out
-        simulations.
-  \item Symbolic regression over the point-wise feature space of the
-        earlier model, the point-wise baseline of Table~\ref{tab:results},
-        compresses its shock criterion into a closed-form expression,
-        but the substitution is not free: retraining that model with
-        the frozen algebraic gate gives $R^{2}=0.9421$ ($C_p$),
-        $0.8202$ ($C_{fx}$), $0.7458$ ($C_{fy}$) and $0.8400$
-        ($C_{fz}$), against $0.9506$, $0.8512$, $0.8463$ and $0.8555$
-        for the neural gate on the same sample.  Interpretability is
-        bought at a real, and for $C_{fy}$ substantial, cost in
-        accuracy.  The expression belongs to that feature space; what
-        the same distillation yields against the spatial indicator is
-        a separate measurement, and the next conclusion reports it.
-  \item Distilling the spatial indicator into those same nine local
-        variables corroborates the point-wise criterion and, at the
-        same time, prices interpretability far higher.  The search
-        independently rediscovers the core of
-        Eq.~(\ref{eq:srdiscovered}): $C_p^{\mathrm{crit}}$ inside an
-        exponential over span-wise station, here as
-        $\exp(C_p^{\mathrm{crit}}/\sqrt{\eta})$.  It reaches only
-        $R^{2}=0.4095$ against the indicator's output, however, where
-        gradient boosting and a small MLP on the identical features
-        reach $0.8717$ and $0.8850$: the information is local, and it
-        is the closed form
-        that cannot carry it.  Substituting the expression for the
-        neural indicator costs $0.1096$ of shock-subset $R^{2}(C_p)$
-        ($0.9350 \to 0.8253$, Table~\ref{tab:symspatial}) against
-        $0.0168$ for the same substitution in the point-wise
-        model, $6.5\times$ as much.  The friction scores,
-        which do not read $p_s$, are unchanged and serve as the
-        control.  No algebraic gate is used in the reported model.
-\end{itemize}
-
-Future work will extend the framework to multiple geometries to test
-cross-geometry generalisation, incorporate unsteady RANS labels for
-buffet-onset prediction, and repeat the two-stage and from-scratch
-arms over several initialisations so that the curriculum effect can
-be separated from seed variance.  The surrogate remains
-differentiable end to end and can still act as a shock-aware penalty
-inside adjoint-based aerodynamic shape optimisation loops, but the
-spatial formulation raises the cost of doing so: a perturbed geometry
-is evaluated as a whole surface with a rebuilt neighbour graph rather
-than point by point, so graph construction must either be folded into
-the optimisation loop or held fixed under sufficiently small
-deformations.  An interpretable sensor for the spatial indicator also
-remains open, but Section~\ref{sec:srspatial} narrows what would
-count as progress towards one: since an unconstrained model over the
-nine local variables recovers most of the indicator's output while a
-closed form over the same variables does not, the obstruction lies in
-the algebraic hypothesis class and not in the locality of the
-features, and a larger symbolic search over that feature set is not
-the route.
+Future work will repeat the two-stage and from-scratch arms over several
+initialisations, to separate the curriculum effect from seed variance,
+and revisit the closed-form criterion of Section~\ref{sec:symbolic} for
+the spatial indicator.
 
 
 % ================================================================
@@ -2059,36 +693,33 @@ the route.
 
 \section*{ACKNOWLEDGEMENTS}
 
-This work is part of the project HERFUSE (GA No 101140567) funded by the European Union. 
-This work is part of the project TIFON (PLEC2023-010251), funded by MCIN/AEI/ /10.13039/501100011033
+This work is part of the projects HERFUSE (GA No 101140567), funded by the
+European Union, and TIFON (PLEC2023-010251), funded by
+MCIN/AEI/\allowbreak 10.13039/\allowbreak 501100011033.
 
 % ================================================================
 %  REFERENCES
 % ================================================================
 
-\begin{thebibliography}{26}
+\begin{thebibliography}{14}
+\setlength{\itemsep}{0pt}\setlength{\parsep}{0pt}\setlength{\parskip}{0pt}
+\setlength{\itemsep}{0pt}\setlength{\parsep}{0pt}
 
 \bibitem{Vassberg2008}
 J.C.~Vassberg, M.A.~DeHaan, S.M.~Rivers and R.A.~Wahls.
 Development of a common research model for applied CFD validation
-studies.
-\textit{AIAA Paper 2008-6919}, 26th AIAA Applied Aerodynamics
-Conference, Honolulu, HI, 2008.
+studies. \textit{AIAA Paper 2008-6919}, 2008.
 
 \bibitem{Levy2013}
-D.W.~Levy, K.R.~Laflin, E.N.~Tinoco, J.C.~Vassberg, M.~Mani,
-B.~Rider, C.L.~Rumsey, R.A.~Wahls, J.H.~Morrison, O.P.~Brodersen,
-S.~Crippa, D.J.~Mavriplis and M.~Murayama.
-Summary of data from the fifth computational fluid dynamics drag
-prediction workshop.
+D.W.~Levy et al.
+Summary of data from the fifth CFD drag prediction workshop.
 \textit{Journal of Aircraft}, Vol.~51, No.~4, pp.~1194--1213, 2014.
 
 \bibitem{Peter2025}
-J.~Peter, Q.~Bennehard, S.~Heib, J.-L.~Hantrais-Gervois and
-F.~Mo\"ens.
+J.~Peter, Q.~Bennehard, S.~Heib et al.
 ONERA's CRM WBPN database for machine learning activities, related
 regression challenge and first results.
-\textit{Computers \& Fluids}, 2025.  arXiv:2505.06265.
+\textit{Computers \& Fluids}, 2025.
 
 \bibitem{Han2018}
 Z.-H.~Han, R.~Zhang and C.-Z.~Song.
@@ -2099,24 +730,12 @@ surrogate-based approach.
 \bibitem{Bhatnagar2019}
 S.~Bhatnagar, Y.~Afshar, S.~Pan, K.~Duraisamy and S.~Kaushik.
 Prediction of aerodynamic flow fields using convolutional neural
-networks.
-\textit{Computational Mechanics}, Vol.~64, pp.~525--545, 2019.
-
-\bibitem{Sekar2019}
-V.~Sekar, Q.~Jiang, C.~Shu and B.C.~Khoo.
-Fast flow field prediction over airfoils using deep learning approach.
-\textit{Physics of Fluids}, Vol.~31, No.~5, 057103, 2019.
+networks. \textit{Computational Mechanics}, Vol.~64, pp.~525--545, 2019.
 
 \bibitem{Ray2018}
 D.~Ray and J.S.~Hesthaven.
 An artificial neural network as a troubled-cell indicator.
 \textit{Journal of Computational Physics}, Vol.~367, pp.~166--191, 2018.
-
-\bibitem{Ray2019}
-D.~Ray and J.S.~Hesthaven.
-Detecting troubled-cells on two-dimensional unstructured grids using
-a neural network.
-\textit{Journal of Computational Physics}, Vol.~397, pp.~1--31, 2019.
 
 \bibitem{Discacciati2020}
 N.~Discacciati, J.S.~Hesthaven and D.~Ray.
@@ -2124,64 +743,11 @@ Controlling oscillations in high-order discontinuous Galerkin schemes
 using artificial viscosity tuned by neural networks.
 \textit{Journal of Computational Physics}, Vol.~409, 109304, 2020.
 
-\bibitem{Schwander2021}
-L.~Schwander, D.~Ray and J.S.~Hesthaven.
-Controlling oscillations in spectral methods by local artificial
-viscosity governed by neural networks.
-\textit{Journal of Computational Physics}, Vol.~431, 110144, 2021.
-
-\bibitem{Morgan2020}
-N.R.~Morgan, J.I.~Waltz, D.E.~Burton, M.R.J.~Charest,
-T.R.~Canfield and J.G.~Wohlbier.
-A Godunov-like point-centred essentially Lagrangian hydrodynamic
-approach.
-\textit{Journal of Computational Physics}, Vol.~408, 109298, 2020.
-
 \bibitem{Raissi2019}
 M.~Raissi, P.~Perdikaris and G.E.~Karniadakis.
 Physics-informed neural networks: a deep learning framework for
 solving forward and inverse problems involving nonlinear PDEs.
 \textit{Journal of Computational Physics}, Vol.~378, pp.~686--707, 2019.
-
-\bibitem{Karniadakis2021}
-G.E.~Karniadakis, I.G.~Kevrekidis, L.~Lu, P.~Perdikaris, S.~Wang
-and L.~Yang.
-Physics-informed machine learning.
-\textit{Nature Reviews Physics}, Vol.~3, pp.~422--440, 2021.
-
-\bibitem{Brunton2016}
-S.L.~Brunton, J.L.~Proctor and J.N.~Kutz.
-Discovering governing equations from data by sparse identification
-of nonlinear dynamical systems.
-\textit{Proceedings of the National Academy of Sciences},
-Vol.~113, No.~15, pp.~3932--3937, 2016.
-
-\bibitem{Schmidt2009}
-M.~Schmidt and H.~Lipson.
-Distilling free-form natural laws from experimental data.
-\textit{Science}, Vol.~324, No.~5923, pp.~81--85, 2009.
-
-\bibitem{Cranmer2020}
-M.~Cranmer, A.~Sanchez~Gonzalez, P.~Battaglia, R.~Xu, K.~Cranmer,
-D.~Spergel and S.~Ho.
-Discovering symbolic models from deep learning with inductive biases.
-\textit{Advances in Neural Information Processing Systems},
-Vol.~33, 2020.
-
-\bibitem{LaCava2021}
-W.~La~Cava, P.~Orzechowski, B.~Burlacu, F.O.~de~Franca,
-M.~Virgolin, Y.~Jin, M.~Kommenda and J.H.~Moore.
-Contemporary symbolic regression methods and their relative
-performance.
-\textit{Advances in Neural Information Processing Systems},
-Vol.~34, 2021.
-
-\bibitem{Angelis2023}
-D.~Angelis, F.~Sofos and T.E.~Karakasidis.
-Artificial intelligence in physical sciences: symbolic regression
-trends and perspectives.
-\textit{Archives of Computational Methods in Engineering},
-Vol.~30, pp.~3845--3865, 2023.
 
 \bibitem{Jacobs1991}
 R.A.~Jacobs, M.I.~Jordan, S.J.~Nowlan and G.E.~Hinton.
@@ -2189,46 +755,23 @@ Adaptive mixtures of local experts.
 \textit{Neural Computation}, Vol.~3, No.~1, pp.~79--87, 1991.
 
 \bibitem{Shazeer2017}
-N.~Shazeer, A.~Mirhoseini, K.~Maziarz, A.~Davis, Q.~Le,
-G.~Hinton and J.~Dean.
+N.~Shazeer, A.~Mirhoseini, K.~Maziarz et al.
 Outrageously large neural networks: the sparsely-gated
-mixture-of-experts layer.
-\textit{International Conference on Learning Representations}, 2017.
-
-\bibitem{Fedus2022}
-W.~Fedus, B.~Zoph and N.~Shazeer.
-Switch Transformers: scaling to trillion parameter models with
-simple and efficient sparsity.
-\textit{Journal of Machine Learning Research}, Vol.~23, No.~120,
-pp.~1--39, 2022.
+mixture-of-experts layer. \textit{ICLR}, 2017.
 
 \bibitem{Jang2017}
 E.~Jang, S.~Gu and B.~Poole.
-Categorical reparameterization with Gumbel-Softmax.
-\textit{International Conference on Learning Representations}, 2017.
-
-\bibitem{Maddison2017}
-C.J.~Maddison, A.~Mnih and Y.W.~Teh.
-The Concrete distribution: a continuous relaxation of discrete
-random variables.
-\textit{International Conference on Learning Representations}, 2017.
+Categorical reparameterization with Gumbel-Softmax. \textit{ICLR}, 2017.
 
 \bibitem{Ba2016}
 J.L.~Ba, J.R.~Kiros and G.E.~Hinton.
-Layer normalization.
-\textit{arXiv preprint arXiv:1607.06450}, 2016.
+Layer normalization. \textit{arXiv:1607.06450}, 2016.
 
 \bibitem{Elfwing2018}
 S.~Elfwing, E.~Uchibe and K.~Doya.
 Sigmoid-weighted linear units for neural network function
 approximation in reinforcement learning.
 \textit{Neural Networks}, Vol.~107, pp.~3--11, 2018.
-
-\bibitem{Ramachandran2017}
-P.~Ramachandran, B.~Zoph and Q.V.~Le.
-Searching for activation functions.
-\textit{arXiv preprint arXiv:1710.05941}, 2017.
-
 \end{thebibliography}
 
 \end{document}
